@@ -1,0 +1,34 @@
+syntax="proto3";
+
+package wq;
+
+message Msg{
+	oneof union {
+		Login login = 1;
+		LoginReturnOk loginReturnOk = 2;
+		LoginReturnFail loginReturnFail = 3;
+		Logout logout = 4;
+	}
+}
+
+message Player{
+	string pid = 1;
+	string level = 3;
+}
+
+message Login{
+	string pid = 1;
+	string passwd = 2;
+}
+
+message LoginReturnOk {
+	Player player = 1;
+}
+
+message LoginReturnFail {
+	string reason = 1;
+}
+
+message Logout{
+	string pid = 1;
+}
