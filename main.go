@@ -53,23 +53,7 @@ type Player struct {
 	Level          Level
 	IsPlaying      bool      //是否正在对局
 	IsAcceptInvite bool      //是否接受邀请
-	Cond           Condition //对局条件
-}
-
-// i should know the minLevel and maxLevel in my condition
-func (p *Player) LevelRange() (mountMin int, mountMax int) {
-	mount := p.Level.GetMount()
-	diff := p.Cond.LevelDiff
-	mountMin = mount - diff
-	mountMax = mount + diff
-	//range should in [1,36],36 = 18k+9d+9p
-	if mountMin < 1 {
-		mountMin = 1
-	}
-	if mountMax > 36 {
-		mountMax = 36
-	}
-	return
+	WaitCond           WaitCondition //等待对局条件
 }
 
 type ClientProxy struct {
@@ -95,12 +79,16 @@ type Counting struct {
 	SecondsPerTime int //每次保留时间
 }
 
-// we can give Rule from two player's condition,base on Condition,we can make
+type InviteCondition struct {
+	LevelDiff int //级别范围 0,同级；1，上下差1；3，上下差3
+	Seconds  int      //保留时间
+	Counting Counting //读秒
+}
+
+// we can give Rule from two player's condition,base on WaitCondition,we can make
 // auto invite quickly and accurate
-type Condition struct {
+type WaitCondition struct {
 	LevelDiff                            int //级别范围 0,同级；1，上下差1；3，上下差3
-	HandicapDiff                         int //0,不让=<按规则来>；规则之上{1，让你一个，2，让你2个；-1，你让我一个}
-	KomiDiff                             int //0,as the rule;1,add 1 over rule;-1,sub 1 over rule
 	MinSeconds, MaxSeconds               int //保留时间范围,if min<0&&max<0,不限制
 	MinCountdown, MaxCountdown           int //读秒范围
 	MinTimesRetent, MaxTimesRetent       int //保留次数范围
@@ -112,8 +100,8 @@ type Condition struct {
 type Rule struct {
 	Handicap int      //让子
 	Komi     float32  //贴目
-	Counting Counting //读秒
 	Seconds  int      //时间
+	Counting Counting //读秒
 }
 
 type Result struct {
@@ -156,16 +144,16 @@ func GetPlayer(player *Player, pid string, passwd string) bool {
 		player.Level = Level{3, LevelD}
 		player.IsPlaying = false
 		player.IsAcceptInvite = true
-		player.Cond = DefaultCondition()
+		player.WaitCond = DefaultWaitCondition()
 		return true
 	} else {
 		return false
 	}
 }
 
-func DefaultCondition() Condition {
-	return Condition{
-		LevelDiff: 0, HandicapDiff: 0, KomiDiff: 0,
+func DefaultWaitCondition() WaitCondition {
+	return WaitCondition{
+		LevelDiff: 0,
 		MinSeconds: 1200, MaxSeconds: 1200,
 		MinCountdown: 30, MaxCountdown: 30,
 		MinTimesRetent: 3, MaxTimesRetent: 3,
@@ -185,19 +173,53 @@ func HasIntersection(min1, max1, min2, max2 int) bool {
 	return b
 }
 
-func DoesMatch(p1 Player, p2 Player) bool {
-	var b bool = true
-	min1, max1 := p1.LevelRange()
-	min2, max2 := p2.LevelRange()
-	levelMatch := HasIntersection(min1, max1, min2, max2)
-	return b && levelMatch
+func LevelRange(level Level,diff int) (mountMin int, mountMax int) {
+	mount := level.GetMount()
+	mountMin = mount - diff
+	mountMax = mount + diff
+	//range should in [1,36],36 = 18k+9d+9p
+	if mountMin < 1 {
+		mountMin = 1
+	}
+	if mountMax > 36 {
+		mountMax = 36
+	}
+	return
 }
 
-/* func makeRule(p1 Player,p2 Player) Rule {
-	rule := Rule{}
-	heheeh
+func ValueInRange(v,min,max int) bool {
+	return v >= min && v <= max
 }
+/* inviting from p1,p2 is waiting */
+func ConditionMatch(cond InviteCondition,p1 Player, p2 Player) bool {
+	var wd WaitCondition = p2.WaitCond
+	//level cond
+	min1,max1 := LevelRange(p1.Level,cond.LevelDiff)
+	min2,max2 := LevelRange(p2.Level,wd.LevelDiff)
+	levelCond := HasIntersection(min1,max1,min2,max2)
+	//seconds cond
+	secondsCond := cond.Seconds >= wd.MinSeconds && cond.Seconds <= wd.MaxSeconds
+	//counting cond
+	countdown := cond.Counting.Countdown
+	timesRetent := cond.Counting.TimesRetent
+	secondsPerTime := cond.Counting.SecondsPerTime
+
+	countdownCond := ValueInRange(countdown,wd.MinCountdown,wd.MaxCountdown)
+	timesRetentCond := ValueInRange(timesRetent,wd.MinTimesRetent,wd.MaxTimesRetent)
+	secondsPerTimeCond := ValueInRange(secondsPerTime,wd.MinSecondsPerTime,wd.MaxSecondsPerTime)
+	
+	return levelCond && secondsCond && countdownCond && timesRetentCond && secondsPerTimeCond
+}
+
+/* 
+inviting from p1 to p2
+贴目和让子自动生成
 */
+func makeRule(cond InviteCondition,from Player,to Player) Rule {
+	rule := Rule{}
+	return rule
+}
+
 func ServerLoop() {
 	for {
 		log.Println("read serverPipe")
