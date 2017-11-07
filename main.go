@@ -211,12 +211,33 @@ func ConditionMatch(cond InviteCondition,p1 Player, p2 Player) bool {
 	return levelCond && secondsCond && countdownCond && timesRetentCond && secondsPerTimeCond
 }
 
+/* 绝对值 */
+func abs(n int) int {
+	if n > 0 {
+		return n
+	} else {
+		return n*(-1)
+	}
+}
+
 /* 
 inviting from p1 to p2
 贴目和让子自动生成
 */
-func makeRule(cond InviteCondition,from Player,to Player) Rule {
+func makeRule(cond InviteCondition,p1 Player,p2 Player) Rule {
 	rule := Rule{}
+	rule.Seconds = cond.Seconds
+	rule.Counting = cond.Counting
+	
+	mount1 := p1.Level.GetMount()
+	mount2 := p2.Level.GetMount()
+	if mount1 == mount2 {
+		rule.Handicap = 0
+		rule.Komi = 6.5
+	}else{
+		rule.Handicap = abs(mount1-mount2)
+		rule.Komi = float32(rule.Handicap)
+	}
 	return rule
 }
 
