@@ -60,11 +60,13 @@ type WaitCondition struct {
 
 func (wc *WaitCondition) ToMsg() *wq.WaitCondition {
 	return &wq.WaitCondition{
-		LevelDiff: int32(wc.LevelDiff),
-		MinSeconds: int32(wc.MinSeconds),
-		MaxSeconds: int32(wc.MaxSeconds),
-		MinTimesRetent: int32(wc.MinTimesRetent),
-		MaxTimesRetent: int32(wc.MaxTimesRetent),
+		LevelDiff:         int32(wc.LevelDiff),
+		MinSeconds:        int32(wc.MinSeconds),
+		MaxSeconds:        int32(wc.MaxSeconds),
+		MinCountdown:      int32(wc.MinCountdown),
+		MaxCountdown:      int32(wc.MaxCountdown),
+		MinTimesRetent:    int32(wc.MinTimesRetent),
+		MaxTimesRetent:    int32(wc.MaxTimesRetent),
 		MinSecondsPerTime: int32(wc.MinSecondsPerTime),
 		MaxSecondsPerTime: int32(wc.MaxSecondsPerTime),
 	}
@@ -80,11 +82,23 @@ type Player struct {
 
 func (p *Player) ToMsg() *wq.Player {
 	return &wq.Player{
-		Pid: p.Pid,
-		Level: p.Level.String(),
-		IsPlaying: p.IsPlaying,
+		Pid:            p.Pid,
+		Level:          p.Level.String(),
+		IsPlaying:      p.IsPlaying,
 		IsAcceptInvite: p.IsAcceptInvite,
-		WaitCond: p.WaitCond.ToMsg(),
+		WaitCond:       p.WaitCond.ToMsg(),
+	}
+}
+
+type PlayerSetting struct {
+	IsAcceptInvite bool
+	WaitCond       WaitCondition
+}
+
+func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
+	return &wq.PlayerSetting{
+		IsAcceptInvite: ps.IsAcceptInvite,
+		WaitCond:       ps.WaitCond.ToMsg(),
 	}
 }
 
@@ -113,8 +127,8 @@ type Counting struct {
 
 func (c *Counting) ToMsg() *wq.Counting {
 	return &wq.Counting{
-		Countdown: int32(c.Countdown),
-		TimesRetent: int32(c.TimesRetent),
+		Countdown:      int32(c.Countdown),
+		TimesRetent:    int32(c.TimesRetent),
 		SecondsPerTime: int32(c.SecondsPerTime),
 	}
 }
@@ -128,8 +142,8 @@ type InviteCondition struct {
 func (ic *InviteCondition) ToMsg() *wq.InviteCondition {
 	return &wq.InviteCondition{
 		LevelDiff: int32(ic.LevelDiff),
-		Seconds: int32(ic.Seconds),
-		Counting: ic.Counting.ToMsg(),
+		Seconds:   int32(ic.Seconds),
+		Counting:  ic.Counting.ToMsg(),
 	}
 }
 
@@ -295,7 +309,7 @@ func ServerLoop() {
 				clientProxy.Player = player
 				msgOk := &wq.Msg{
 					Union: &wq.Msg_LoginReturnOk{
-						&wq.LoginReturnOk{ Player: player.ToMsg() },
+						&wq.LoginReturnOk{Player: player.ToMsg()},
 					},
 				}
 				clientProxy.Down <- *msgOk
@@ -325,7 +339,6 @@ func ListenLoop() {
 
 	for {
 		conn, err := l.Accept()
-		log.Printf("conn's type is: %T\n", conn)
 		if err != nil {
 			log.Fatal(err)
 		}
