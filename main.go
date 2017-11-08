@@ -1,13 +1,13 @@
 package main
 
 import (
+	"./wq"
 	"bytes"
 	"encoding/binary"
 	"github.com/golang/protobuf/proto"
 	"io"
 	"log"
 	"net"
-	"./wq"
 	"strconv"
 )
 
@@ -48,12 +48,44 @@ func (level *Level) GetMount() int {
 	return mount
 }
 
+// we can give Rule from two player's condition,base on WaitCondition,we can make
+// auto invite quickly and accurate
+type WaitCondition struct {
+	LevelDiff                            int //级别范围 0,同级；1，上下差1；3，上下差3
+	MinSeconds, MaxSeconds               int //保留时间范围,if min<0&&max<0,不限制
+	MinCountdown, MaxCountdown           int //读秒范围
+	MinTimesRetent, MaxTimesRetent       int //保留次数范围
+	MinSecondsPerTime, MaxSecondsPerTime int //每次保留时间范围
+}
+
+func (wc *WaitCondition) ToMsg() *wq.WaitCondition {
+	return &wq.WaitCondition{
+		LevelDiff: int32(wc.LevelDiff),
+		MinSeconds: int32(wc.MinSeconds),
+		MaxSeconds: int32(wc.MaxSeconds),
+		MinTimesRetent: int32(wc.MinTimesRetent),
+		MaxTimesRetent: int32(wc.MaxTimesRetent),
+		MinSecondsPerTime: int32(wc.MinSecondsPerTime),
+		MaxSecondsPerTime: int32(wc.MaxSecondsPerTime),
+	}
+}
+
 type Player struct {
 	Pid            string
 	Level          Level
-	IsPlaying      bool      //是否正在对局
-	IsAcceptInvite bool      //是否接受邀请
-	WaitCond           WaitCondition //等待对局条件
+	IsPlaying      bool          //是否正在对局
+	IsAcceptInvite bool          //是否接受邀请
+	WaitCond       WaitCondition //等待对局条件
+}
+
+func (p *Player) ToMsg() *wq.Player {
+	return &wq.Player{
+		Pid: p.Pid,
+		Level: p.Level.String(),
+		IsPlaying: p.IsPlaying,
+		IsAcceptInvite: p.IsAcceptInvite,
+		WaitCond: p.WaitCond.ToMsg(),
+	}
 }
 
 type ClientProxy struct {
@@ -79,20 +111,26 @@ type Counting struct {
 	SecondsPerTime int //每次保留时间
 }
 
-type InviteCondition struct {
-	LevelDiff int //级别范围 0,同级；1，上下差1；3，上下差3
-	Seconds  int      //保留时间
-	Counting Counting //读秒
+func (c *Counting) ToMsg() *wq.Counting {
+	return &wq.Counting{
+		Countdown: int32(c.Countdown),
+		TimesRetent: int32(c.TimesRetent),
+		SecondsPerTime: int32(c.SecondsPerTime),
+	}
 }
 
-// we can give Rule from two player's condition,base on WaitCondition,we can make
-// auto invite quickly and accurate
-type WaitCondition struct {
-	LevelDiff                            int //级别范围 0,同级；1，上下差1；3，上下差3
-	MinSeconds, MaxSeconds               int //保留时间范围,if min<0&&max<0,不限制
-	MinCountdown, MaxCountdown           int //读秒范围
-	MinTimesRetent, MaxTimesRetent       int //保留次数范围
-	MinSecondsPerTime, MaxSecondsPerTime int //每次保留时间范围
+type InviteCondition struct {
+	LevelDiff int      //级别范围 0,同级；1，上下差1；3，上下差3
+	Seconds   int      //保留时间
+	Counting  Counting //读秒
+}
+
+func (ic *InviteCondition) ToMsg() *wq.InviteCondition {
+	return &wq.InviteCondition{
+		LevelDiff: int32(ic.LevelDiff),
+		Seconds: int32(ic.Seconds),
+		Counting: ic.Counting.ToMsg(),
+	}
 }
 
 // when we invite or waiting ,we should give the playing game condition with proto
@@ -153,7 +191,7 @@ func GetPlayer(player *Player, pid string, passwd string) bool {
 
 func DefaultWaitCondition() WaitCondition {
 	return WaitCondition{
-		LevelDiff: 0,
+		LevelDiff:  0,
 		MinSeconds: 1200, MaxSeconds: 1200,
 		MinCountdown: 30, MaxCountdown: 30,
 		MinTimesRetent: 3, MaxTimesRetent: 3,
@@ -161,7 +199,7 @@ func DefaultWaitCondition() WaitCondition {
 	}
 }
 
-/* 
+/*
 min-----max
 	 min------max
 */
@@ -173,7 +211,7 @@ func HasIntersection(min1, max1, min2, max2 int) bool {
 	return b
 }
 
-func LevelRange(level Level,diff int) (mountMin int, mountMax int) {
+func LevelRange(level Level, diff int) (mountMin int, mountMax int) {
 	mount := level.GetMount()
 	mountMin = mount - diff
 	mountMax = mount + diff
@@ -187,16 +225,17 @@ func LevelRange(level Level,diff int) (mountMin int, mountMax int) {
 	return
 }
 
-func ValueInRange(v,min,max int) bool {
+func ValueInRange(v, min, max int) bool {
 	return v >= min && v <= max
 }
+
 /* inviting from p1,p2 is waiting */
-func ConditionMatch(cond InviteCondition,p1 Player, p2 Player) bool {
+func ConditionMatch(cond InviteCondition, p1 Player, p2 Player) bool {
 	var wd WaitCondition = p2.WaitCond
 	//level cond
-	min1,max1 := LevelRange(p1.Level,cond.LevelDiff)
-	min2,max2 := LevelRange(p2.Level,wd.LevelDiff)
-	levelCond := HasIntersection(min1,max1,min2,max2)
+	min1, max1 := LevelRange(p1.Level, cond.LevelDiff)
+	min2, max2 := LevelRange(p2.Level, wd.LevelDiff)
+	levelCond := HasIntersection(min1, max1, min2, max2)
 	//seconds cond
 	secondsCond := cond.Seconds >= wd.MinSeconds && cond.Seconds <= wd.MaxSeconds
 	//counting cond
@@ -204,38 +243,38 @@ func ConditionMatch(cond InviteCondition,p1 Player, p2 Player) bool {
 	timesRetent := cond.Counting.TimesRetent
 	secondsPerTime := cond.Counting.SecondsPerTime
 
-	countdownCond := ValueInRange(countdown,wd.MinCountdown,wd.MaxCountdown)
-	timesRetentCond := ValueInRange(timesRetent,wd.MinTimesRetent,wd.MaxTimesRetent)
-	secondsPerTimeCond := ValueInRange(secondsPerTime,wd.MinSecondsPerTime,wd.MaxSecondsPerTime)
-	
+	countdownCond := ValueInRange(countdown, wd.MinCountdown, wd.MaxCountdown)
+	timesRetentCond := ValueInRange(timesRetent, wd.MinTimesRetent, wd.MaxTimesRetent)
+	secondsPerTimeCond := ValueInRange(secondsPerTime, wd.MinSecondsPerTime, wd.MaxSecondsPerTime)
+
 	return levelCond && secondsCond && countdownCond && timesRetentCond && secondsPerTimeCond
 }
 
 /* 绝对值 */
 func abs(n int) int {
-	if n > 0 {
+	if n >= 0 {
 		return n
 	} else {
-		return n*(-1)
+		return n * (-1)
 	}
 }
 
-/* 
+/*
 inviting from p1 to p2
 贴目和让子自动生成
 */
-func makeRule(cond InviteCondition,p1 Player,p2 Player) Rule {
+func makeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
 	rule := Rule{}
 	rule.Seconds = cond.Seconds
 	rule.Counting = cond.Counting
-	
+
 	mount1 := p1.Level.GetMount()
 	mount2 := p2.Level.GetMount()
 	if mount1 == mount2 {
 		rule.Handicap = 0
 		rule.Komi = 6.5
-	}else{
-		rule.Handicap = abs(mount1-mount2)
+	} else {
+		rule.Handicap = abs(mount1 - mount2)
 		rule.Komi = float32(rule.Handicap)
 	}
 	return rule
@@ -256,9 +295,7 @@ func ServerLoop() {
 				clientProxy.Player = player
 				msgOk := &wq.Msg{
 					Union: &wq.Msg_LoginReturnOk{
-						&wq.LoginReturnOk{
-							Player: &wq.Player{Pid: player.Pid, Level: player.Level.String()},
-						},
+						&wq.LoginReturnOk{ Player: player.ToMsg() },
 					},
 				}
 				clientProxy.Down <- *msgOk
@@ -288,7 +325,7 @@ func ListenLoop() {
 
 	for {
 		conn, err := l.Accept()
-		log.Printf("conn's type is: %T\n",conn)
+		log.Printf("conn's type is: %T\n", conn)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -355,8 +392,8 @@ func HandleUp(clientProxy *ClientProxy) {
 				//need to receive again
 				break
 			}
-		}
-	}
+		} //for of msg buf
+	} //for of conn read
 }
 
 func HandleDown(clientProxy *ClientProxy) {
