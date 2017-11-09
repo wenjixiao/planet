@@ -265,7 +265,7 @@ func ConditionMatch(cond InviteCondition, p1 Player, p2 Player) bool {
 }
 
 /* 绝对值 */
-func abs(n int) int {
+func Abs(n int) int {
 	if n >= 0 {
 		return n
 	} else {
@@ -277,7 +277,7 @@ func abs(n int) int {
 inviting from p1 to p2
 贴目和让子自动生成
 */
-func makeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
+func MakeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
 	rule := Rule{}
 	rule.Seconds = cond.Seconds
 	rule.Counting = cond.Counting
@@ -288,7 +288,7 @@ func makeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
 		rule.Handicap = 0
 		rule.Komi = 6.5
 	} else {
-		rule.Handicap = abs(mount1 - mount2)
+		rule.Handicap = Abs(mount1 - mount2)
 		rule.Komi = float32(rule.Handicap)
 	}
 	return rule
