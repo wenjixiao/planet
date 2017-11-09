@@ -4,11 +4,11 @@ import (
 	"./wq"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"github.com/golang/protobuf/proto"
 	"io"
 	"log"
 	"net"
-	"strconv"
 )
 
 const (
@@ -23,19 +23,19 @@ const (
 )
 
 type Level struct {
-	Num    int
+	Num    int32
 	Suffix rune //p,d,k
 }
 
 func (level *Level) String() string {
-	return strconv.Itoa(level.Num) + string(level.Suffix)
+	return fmt.Sprint(level.Num) + string(level.Suffix)
 }
 
 /* 把级别量化 */
-func (level *Level) GetMount() int {
-	LevelMinK := 18
-	LevelMaxD := 9
-	var mount int
+func (level *Level) GetMount() int32 {
+	var LevelMinK int32 = 18
+	var LevelMaxD int32 = 9
+	var mount int32
 	if level.Suffix == LevelK {
 		//k级是从18k->1k逆序的
 		mount = LevelMinK - level.Num + 1
@@ -51,24 +51,24 @@ func (level *Level) GetMount() int {
 // we can give Rule from two player's condition,base on WaitCondition,we can make
 // auto invite quickly and accurate
 type WaitCondition struct {
-	LevelDiff                            int //级别范围 0,同级；1，上下差1；3，上下差3
-	MinSeconds, MaxSeconds               int //保留时间范围,if min<0&&max<0,不限制
-	MinCountdown, MaxCountdown           int //读秒范围
-	MinTimesRetent, MaxTimesRetent       int //保留次数范围
-	MinSecondsPerTime, MaxSecondsPerTime int //每次保留时间范围
+	LevelDiff                            int32 //级别范围 0,同级；1，上下差1；3，上下差3
+	MinSeconds, MaxSeconds               int32 //保留时间范围,if min<0&&max<0,不限制
+	MinCountdown, MaxCountdown           int32 //读秒范围
+	MinTimesRetent, MaxTimesRetent       int32 //保留次数范围
+	MinSecondsPerTime, MaxSecondsPerTime int32 //每次保留时间范围
 }
 
 func (wc *WaitCondition) ToMsg() *wq.WaitCondition {
 	return &wq.WaitCondition{
-		LevelDiff:         int32(wc.LevelDiff),
-		MinSeconds:        int32(wc.MinSeconds),
-		MaxSeconds:        int32(wc.MaxSeconds),
-		MinCountdown:      int32(wc.MinCountdown),
-		MaxCountdown:      int32(wc.MaxCountdown),
-		MinTimesRetent:    int32(wc.MinTimesRetent),
-		MaxTimesRetent:    int32(wc.MaxTimesRetent),
-		MinSecondsPerTime: int32(wc.MinSecondsPerTime),
-		MaxSecondsPerTime: int32(wc.MaxSecondsPerTime),
+		LevelDiff:         wc.LevelDiff,
+		MinSeconds:        wc.MinSeconds,
+		MaxSeconds:        wc.MaxSeconds,
+		MinCountdown:      wc.MinCountdown,
+		MaxCountdown:      wc.MaxCountdown,
+		MinTimesRetent:    wc.MinTimesRetent,
+		MaxTimesRetent:    wc.MaxTimesRetent,
+		MinSecondsPerTime: wc.MinSecondsPerTime,
+		MaxSecondsPerTime: wc.MaxSecondsPerTime,
 	}
 }
 
@@ -114,35 +114,51 @@ type ClientProxyMsg struct {
 }
 
 type Stone struct {
-	Seq   int
-	Color int
-	X, Y  int
+	Seq   int32
+	Color int32
+	X, Y  int32
 }
 
 type Counting struct {
-	Countdown      int //读秒
-	TimesRetent    int //保留次数
-	SecondsPerTime int //每次保留时间
+	Countdown      int32 //读秒
+	TimesRetent    int32 //保留次数
+	SecondsPerTime int32 //每次保留时间
+}
+
+func ToCounting(wc *wq.Counting) *Counting {
+	return &Counting{
+		Countdown:      wc.GetCountdown(),
+		TimesRetent:    wc.GetTimesRetent(),
+		SecondsPerTime: wc.GetSecondsPerTime(),
+	}
 }
 
 func (c *Counting) ToMsg() *wq.Counting {
 	return &wq.Counting{
-		Countdown:      int32(c.Countdown),
-		TimesRetent:    int32(c.TimesRetent),
-		SecondsPerTime: int32(c.SecondsPerTime),
+		Countdown:      c.Countdown,
+		TimesRetent:    c.TimesRetent,
+		SecondsPerTime: c.SecondsPerTime,
 	}
 }
 
 type InviteCondition struct {
-	LevelDiff int      //级别范围 0,同级；1，上下差1；3，上下差3
-	Seconds   int      //保留时间
+	LevelDiff int32    //级别范围 0,同级；1，上下差1；3，上下差3
+	Seconds   int32    //保留时间
 	Counting  Counting //读秒
+}
+
+func ToInviteCondition(ic *wq.InviteCondition) *InviteCondition {
+	return &InviteCondition{
+		LevelDiff: ic.GetLevelDiff(),
+		Seconds:   ic.GetSeconds(),
+		Counting:  *ToCounting(ic.GetCounting()),
+	}
 }
 
 func (ic *InviteCondition) ToMsg() *wq.InviteCondition {
 	return &wq.InviteCondition{
-		LevelDiff: int32(ic.LevelDiff),
-		Seconds:   int32(ic.Seconds),
+		LevelDiff: ic.LevelDiff,
+		Seconds:   ic.Seconds,
 		Counting:  ic.Counting.ToMsg(),
 	}
 }
@@ -150,27 +166,27 @@ func (ic *InviteCondition) ToMsg() *wq.InviteCondition {
 // when we invite or waiting ,we should give the playing game condition with proto
 // so,we can fast dive into game,not useless time proto dialogs
 type Rule struct {
-	Handicap int      //让子
+	Handicap int32    //让子
 	Komi     float32  //贴目
-	Seconds  int      //时间
+	Seconds  int32    //时间
 	Counting Counting //读秒
 }
 
 type Result struct {
 	HasWinner          bool
-	WinnerColor        int
+	WinnerColor        int32
 	MiddleWin, TimeWin bool
 	Howmuch            float32
 }
 
 type Time struct {
 	Count   Counting
-	Seconds int
+	Seconds int32
 }
 
 type Game struct {
 	Id         int32
-	LastColor  int
+	LastColor  int32
 	Rule       Rule
 	Stones     []Stone
 	Result     Result
@@ -217,7 +233,7 @@ func DefaultWaitCondition() WaitCondition {
 min-----max
 	 min------max
 */
-func HasIntersection(min1, max1, min2, max2 int) bool {
+func HasIntersection(min1, max1, min2, max2 int32) bool {
 	var b bool = true
 	if min1 > max2 || max1 < min2 {
 		b = false
@@ -225,7 +241,7 @@ func HasIntersection(min1, max1, min2, max2 int) bool {
 	return b
 }
 
-func LevelRange(level Level, diff int) (mountMin int, mountMax int) {
+func LevelRange(level Level, diff int32) (mountMin int32, mountMax int32) {
 	mount := level.GetMount()
 	mountMin = mount - diff
 	mountMax = mount + diff
@@ -239,7 +255,7 @@ func LevelRange(level Level, diff int) (mountMin int, mountMax int) {
 	return
 }
 
-func ValueInRange(v, min, max int) bool {
+func ValueInRange(v, min, max int32) bool {
 	return v >= min && v <= max
 }
 
@@ -265,7 +281,7 @@ func ConditionMatch(cond InviteCondition, p1 Player, p2 Player) bool {
 }
 
 /* 绝对值 */
-func Abs(n int) int {
+func Abs(n int32) int32 {
 	if n >= 0 {
 		return n
 	} else {
@@ -302,6 +318,7 @@ func ServerLoop() {
 		msg := clientProxyMsg.Msg
 		clientProxy := clientProxyMsg.Cp
 		switch msg.Union.(type) {
+		// login
 		case *wq.Msg_Login:
 			login := msg.GetLogin()
 			player := &Player{}
@@ -323,7 +340,10 @@ func ServerLoop() {
 				}
 				clientProxy.Down <- *msgFail
 			}
-			//other cases
+		case *wq.Msg_PlayerSetting:
+		case *wq.Msg_InviteAuto:
+		case *wq.Msg_InvitePlayer:
+		default:
 		} //switch
 	} //for
 }
@@ -430,7 +450,7 @@ func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
 	}
 	log.Printf("#the MSG#: %s\n", msg)
 	serverPipe <- ClientProxyMsg{clientProxy, msg}
-	//todo here we should dispatch the msg to 1:Server or a 2:Game
+	//*todo* here we should dispatch the msg to 1:Server or a 2:Game
 	log.Println("write msg to serverPipe,ok")
 	// WriteMsg(msg, clientProxy.conn)
 }
