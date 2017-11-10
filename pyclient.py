@@ -99,8 +99,10 @@ class WeiqiClient(wx.Frame):
         	player = message.loginReturnOk.player
         elif unionType == 'loginReturnFail':
         	print "login failed,reason is : ",message.loginReturnFail.reason
+        elif unionType == 'inviteFail':
+        	print "invite failed,reason is : ",message.inviteFail.reason
         else:
-        	 print "no matched union type:",message
+        	print "no matched union type:",message
     def send(self,msg):
     	bin = msg.SerializeToString()
         header = struct.pack('I',len(bin))

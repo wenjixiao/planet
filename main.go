@@ -198,8 +198,8 @@ type Game struct {
 }
 
 var (
-	serverPipe   chan ClientProxyMsg = make(chan ClientProxyMsg)
-	gamePipes    map[int]chan wq.Msg = map[int]chan wq.Msg{}
+	serverPipe   chan *ClientProxyMsg = make(chan *ClientProxyMsg)
+	gamePipes    map[int32]chan *wq.Msg = map[int32]chan *wq.Msg{}
 	clientProxys []*ClientProxy      = []*ClientProxy{}
 )
 
@@ -503,7 +503,7 @@ func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
 		log.Fatal(err)
 	}
 	log.Printf("#the MSG#: %s\n", msg)
-	serverPipe <- ClientProxyMsg{clientProxy, msg}
+	serverPipe <- &ClientProxyMsg{clientProxy, msg}
 	//*todo* here we should dispatch the msg to 1:Server or a 2:Game
 	log.Println("write msg to serverPipe,ok")
 	// WriteMsg(msg, clientProxy.conn)
