@@ -250,33 +250,43 @@ func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game
 	return game
 }
 
-type IdPool struct {
-	length int32
-	nums   []int32
+func GameLoop(gamePipe chan *wq.Msg,game *Game) {
+	gamePipes[game.Id] = gamePipe
+	for {
+		select {
+			case msg := <- gamePipe:
+				log.Printf("get msg for game:%v\n",msg)
+		}
+	}
 }
 
-func InitIdPool(length int32) *IdPool {
-	idpool := &IdPool{length: length}
+type IdPool struct {
+	Size int32
+	Nums   []int32
+}
+
+func InitIdPool(size int32) *IdPool {
+	idpool := &IdPool{Size: size}
 	var i int32
-	for i = 1; i <= length; i++ {
-		idpool.nums = append(idpool.nums, i)
+	for i = 1; i <= size; i++ {
+		idpool.Nums = append(idpool.Nums, i)
 	}
 	return idpool
 }
 
 func (idpool *IdPool) GetId() int32 {
-	if len(idpool.nums) > 0 {
-		idpool.nums = idpool.nums[1:]
-		return idpool.nums[0]
+	if len(idpool.Nums) > 0 {
+		idpool.Nums = idpool.Nums[1:]
+		return idpool.Nums[0]
 	} else {
-		idpool.length += 1
-		idpool.nums = append(idpool.nums, idpool.length)
-		return idpool.nums[0]
+		idpool.Size += 1
+		idpool.Nums = append(idpool.Nums, idpool.Size)
+		return idpool.Nums[0]
 	}
 }
 
 func (idpool *IdPool) PutId(id int32) {
-	idpool.nums = append(idpool.nums, id)
+	idpool.Nums = append(idpool.Nums, id)
 }
 
 func GetPlayer(player *Player, pid string, passwd string) bool {
@@ -452,7 +462,8 @@ func MakeInviteFailMsg(reason string) *wq.Msg {
 func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 	for _, clientProxy := range clientProxys {
 		if ConditionMatch(cond, cp.Player, clientProxy.Player) && !clientProxy.Player.IsPlaying {
-			CreateGame(cond, cp, clientProxy)
+			game := CreateGame(cond, cp, clientProxy)
+			go GameLoop(make(chan *wq.Msg),game)
 			return
 		}
 	}
