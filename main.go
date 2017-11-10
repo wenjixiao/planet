@@ -20,6 +20,14 @@ const (
 
 	Black = 0
 	White = 1
+
+	IdPoolSize = 100
+
+	// game status
+	Inited  = 0
+	Running = 1
+	Paused  = 2
+	Ended   = 3
 )
 
 type Level struct {
@@ -188,6 +196,13 @@ type Rule struct {
 	Counting Counting //读秒
 }
 
+func (r *Rule) MakeTime() Time {
+	return Time{
+		Seconds:  r.Seconds,
+		Counting: r.Counting,
+	}
+}
+
 type Result struct {
 	HasWinner          bool
 	WinnerColor        int32
@@ -196,14 +211,15 @@ type Result struct {
 }
 
 type Time struct {
-	Count   Counting
-	Seconds int32
+	Counting Counting
+	Seconds  int32
 }
 
 type Game struct {
 	Id         int32
+	Rule       *Rule
+	Status     int32
 	LastColor  int32
-	Rule       Rule
 	Stones     []Stone
 	Result     Result
 	PlayerCps  []*ClientProxy
@@ -215,23 +231,35 @@ var (
 	serverPipe   chan *ClientProxyMsg   = make(chan *ClientProxyMsg)
 	gamePipes    map[int32]chan *wq.Msg = map[int32]chan *wq.Msg{}
 	clientProxys []*ClientProxy         = []*ClientProxy{}
+	idpool       *IdPool                = InitIdPool(IdPoolSize)
 )
 
-func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) {
-	game := &Game{}
+func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
+	game := &Game{Id: idpool.GetId()}
+	game.Status = Inited
+	game.Rule = MakeRule(cond, cp1.Player, cp2.Player)
+	if game.Rule.Handicap == 0 {
+		game.LastColor = Black
+	} else {
+		// handicap > 0
+		game.LastColor = White
+	}
+	game.PlayerCps = []*ClientProxy{cp1, cp2}
+	game.Times = []Time{game.Rule.MakeTime(), game.Rule.MakeTime()}
 	log.Printf("game=%v\n", game)
+	return game
 }
 
 type IdPool struct {
 	length int32
-	nums []int32
+	nums   []int32
 }
 
 func InitIdPool(length int32) *IdPool {
 	idpool := &IdPool{length: length}
 	var i int32
-	for i=1;i<=length;i++ {
-		idpool.nums = append(idpool.nums,i)
+	for i = 1; i <= length; i++ {
+		idpool.nums = append(idpool.nums, i)
 	}
 	return idpool
 }
@@ -240,15 +268,15 @@ func (idpool *IdPool) GetId() int32 {
 	if len(idpool.nums) > 0 {
 		idpool.nums = idpool.nums[1:]
 		return idpool.nums[0]
-	}else{
-		idpool.nums.length += 1
-		idpool.nums = append(idpool.nums,idpool.nums.length)
-		return idpool.nums.length
+	} else {
+		idpool.length += 1
+		idpool.nums = append(idpool.nums, idpool.length)
+		return idpool.nums[0]
 	}
 }
 
 func (idpool *IdPool) PutId(id int32) {
-	idpool.nums = append(idpool.nums,id)
+	idpool.nums = append(idpool.nums, id)
 }
 
 func GetPlayer(player *Player, pid string, passwd string) bool {
@@ -338,8 +366,8 @@ func Abs(n int32) int32 {
 inviting from p1 to p2
 贴目和让子值自动生成
 */
-func MakeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
-	rule := Rule{}
+func MakeRule(cond *InviteCondition, p1 *Player, p2 *Player) *Rule {
+	rule := &Rule{}
 	rule.Seconds = cond.Seconds
 	rule.Counting = cond.Counting
 
