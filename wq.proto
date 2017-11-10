@@ -7,13 +7,52 @@ message Msg{
 		Login login = 1;
 		LoginReturnOk loginReturnOk = 2;
 		LoginReturnFail loginReturnFail = 3;
-		Logout logout = 4;
+		PlayerSetting playerSetting = 4;
+		InviteAuto inviteAuto = 5;
+		InvitePlayer invitePlayer = 6;
+		InviteFail inviteFail = 7;
 	}
 }
 
 message Player{
 	string pid = 1;
-	string level = 3;
+	string level = 2;
+	bool isPlaying = 3;
+	bool isAcceptInvite = 4;
+	WaitCondition waitCond = 5;
+}
+
+message PlayerSetting {
+	bool isAcceptInvite = 1;
+	WaitCondition waitCond = 2;
+}
+
+message WaitCondition{
+	int32 levelDiff = 1;
+	int32 minSeconds = 2;
+	int32 maxSeconds = 3;
+	int32 minCountdown = 4;
+	int32 maxCountdown = 5;
+	int32 minTimesRetent = 6;
+	int32 maxTimesRetent = 7;
+	int32 minSecondsPerTime = 8;
+	int32 maxSecondsPerTime = 9;
+}
+
+message Counting {
+	int32 countdown = 1;
+	int32 timesRetent = 2;
+	int32 secondsPerTime = 3;
+}
+
+message InviteCondition {
+	int32 levelDiff = 1;
+	int32 seconds = 2;
+	Counting counting = 3;
+}
+
+message InviteFail {
+	string reason = 1;
 }
 
 message Login{
@@ -27,6 +66,15 @@ message LoginReturnOk {
 
 message LoginReturnFail {
 	string reason = 1;
+}
+
+message InviteAuto {
+	InviteCondition inviteCondition = 1;
+}
+
+message InvitePlayer {
+	string pid = 1;
+	InviteCondition inviteCondition = 2;
 }
 
 message Logout{
