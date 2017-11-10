@@ -2,23 +2,18 @@ package main
 
 import (
 	"testing"
-	"reflect"
-	"fmt"
+	// "fmt"
 )
 
-type Eater interface {
-	Eat() string
-}
-
-type Cat struct {
-}
-
-func (c Cat) Eat() string {
-	return "mouse*"
+func myswitch(n int){
+	switch{
+	case n==1:
+		println(1)
+	case n==2:
+		println(2)
+	}
 }
 
 func TestInterface(t *testing.T) {
-	var n int32 = 3
-	tp := reflect.TypeOf(n)
-	fmt.Printf("person=%v\n",tp)		
+	myswitch(1)
 }

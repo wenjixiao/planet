@@ -104,7 +104,7 @@ func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
 
 type ClientProxy struct {
 	Conn   net.Conn    //read from conn
-	Down   chan wq.Msg //clients can write to down
+	Down   chan *wq.Msg //clients can write to down
 	Player *Player
 }
 
@@ -125,6 +125,7 @@ type Counting struct {
 	SecondsPerTime int32 //每次保留时间
 }
 
+/* Msg to Counting */
 func ToCounting(wc *wq.Counting) *Counting {
 	return &Counting{
 		Countdown:      wc.GetCountdown(),
@@ -147,6 +148,7 @@ type InviteCondition struct {
 	Counting  Counting //读秒
 }
 
+/* Msg to InviteCondition */
 func ToInviteCondition(ic *wq.InviteCondition) *InviteCondition {
 	return &InviteCondition{
 		LevelDiff: ic.GetLevelDiff(),
@@ -201,7 +203,7 @@ var (
 	clientProxys []*ClientProxy      = []*ClientProxy{}
 )
 
-func CreateGame(cp1 *ClientProxy, cp2 *ClientProxy) {
+func CreateGame(cond *InviteCondition,cp1 *ClientProxy, cp2 *ClientProxy) {
 	game := &Game{}
 	log.Printf("game=%v\n", game)
 }
@@ -260,7 +262,7 @@ func ValueInRange(v, min, max int32) bool {
 }
 
 /* inviting from p1,p2 is waiting */
-func ConditionMatch(cond InviteCondition, p1 Player, p2 Player) bool {
+func ConditionMatch(cond *InviteCondition, p1 *Player, p2 *Player) bool {
 	var wd WaitCondition = p2.WaitCond
 	//level cond
 	min1, max1 := LevelRange(p1.Level, cond.LevelDiff)
@@ -329,7 +331,7 @@ func ServerLoop() {
 						&wq.LoginReturnOk{Player: player.ToMsg()},
 					},
 				}
-				clientProxy.Down <- *msgOk
+				clientProxy.Down <- msgOk
 			} else {
 				msgFail := &wq.Msg{
 					Union: &wq.Msg_LoginReturnFail{
@@ -338,14 +340,66 @@ func ServerLoop() {
 						},
 					},
 				}
-				clientProxy.Down <- *msgFail
+				clientProxy.Down <- msgFail
 			}
+		// PlayerSetting
 		case *wq.Msg_PlayerSetting:
+		// InviteAuto
 		case *wq.Msg_InviteAuto:
+			inviteCondition := ToInviteCondition(msg.GetInviteAuto().GetInviteCondition())
+			fmt.Printf("inviteCondition=%v\n",inviteCondition)
+			InviteAutoMatch(inviteCondition,clientProxy)
+		// InvitePlayer
 		case *wq.Msg_InvitePlayer:
+			targetPid := msg.GetInvitePlayer().GetPid()
+			inviteCondition := ToInviteCondition(msg.GetInvitePlayer().GetInviteCondition())
+			InvitePlayerMatch(inviteCondition,clientProxy,targetPid)
 		default:
 		} //switch
 	} //for
+}
+
+/* search ClientProxy by pid,return index */
+func SearchClientProxy(pid string) int {
+	for index,cp := range clientProxys {
+		if cp.Player.Pid == pid {
+			// finded
+			return index 
+		}
+	}
+	// not find
+	return -1
+}
+
+func MakeInviteFailMsg(reason string) *wq.Msg {
+	return &wq.Msg{ Union: &wq.Msg_InviteFail{ &wq.InviteFail{Reason: reason} } }
+}
+
+func InviteAutoMatch(cond *InviteCondition,cp *ClientProxy) {
+	for _,clientProxy := range clientProxys {
+		if ConditionMatch(cond,cp.Player,clientProxy.Player) && !clientProxy.Player.IsPlaying {
+			CreateGame(cond,cp,clientProxy)
+			return
+		}
+	}
+	cp.Down <- MakeInviteFailMsg("no condition matched player")
+}
+
+func InvitePlayerMatch(cond *InviteCondition,cp *ClientProxy,pid string) {
+	if index := SearchClientProxy(pid);index >= 0{
+		clientProxy := clientProxys[index]
+		if ConditionMatch(cond,cp.Player,clientProxy.Player) {
+			if !clientProxy.Player.IsPlaying {
+				CreateGame(cond,cp,clientProxy)
+			}else{
+				cp.Down <- MakeInviteFailMsg("the player is playing")
+			}
+		}else{
+			cp.Down <- MakeInviteFailMsg("condition not match")
+		}
+	}else{
+		cp.Down <- MakeInviteFailMsg("can't find the player")
+	}
 }
 
 func ListenLoop() {
@@ -363,7 +417,7 @@ func ListenLoop() {
 			log.Fatal(err)
 		}
 
-		clientProxy := &ClientProxy{Conn: conn, Down: make(chan wq.Msg)}
+		clientProxy := &ClientProxy{Conn: conn, Down: make(chan *wq.Msg)}
 
 		clientProxys = append(clientProxys, clientProxy)
 
@@ -432,7 +486,7 @@ func HandleUp(clientProxy *ClientProxy) {
 func HandleDown(clientProxy *ClientProxy) {
 	for {
 		msg := <-clientProxy.Down
-		WriteMsg(&msg, clientProxy.Conn)
+		WriteMsg(msg, clientProxy.Conn)
 	}
 }
 
