@@ -102,7 +102,7 @@ class WeiqiClient(wx.Frame):
         elif unionType == 'inviteFail':
         	print "invite failed,reason is : ",message.inviteFail.reason
         else:
-        	print "no matched union type:",message
+        	print "***no matched union type***: ",message
     def send(self,msg):
     	bin = msg.SerializeToString()
         header = struct.pack('I',len(bin))

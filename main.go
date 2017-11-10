@@ -58,6 +58,20 @@ type WaitCondition struct {
 	MinSecondsPerTime, MaxSecondsPerTime int32 //每次保留时间范围
 }
 
+func ToWaitCondition(wc *wq.WaitCondition) *WaitCondition {
+	return &WaitCondition{
+		LevelDiff:         wc.GetLevelDiff(),
+		MinSeconds:        wc.GetMinSeconds(),
+		MaxSeconds:        wc.GetMaxSeconds(),
+		MinCountdown:      wc.GetMinCountdown(),
+		MaxCountdown:      wc.GetMaxCountdown(),
+		MinTimesRetent:    wc.GetMinTimesRetent(),
+		MaxTimesRetent:    wc.GetMaxTimesRetent(),
+		MinSecondsPerTime: wc.GetMinSecondsPerTime(),
+		MaxSecondsPerTime: wc.GetMaxSecondsPerTime(),
+	}
+}
+
 func (wc *WaitCondition) ToMsg() *wq.WaitCondition {
 	return &wq.WaitCondition{
 		LevelDiff:         wc.LevelDiff,
@@ -75,9 +89,9 @@ func (wc *WaitCondition) ToMsg() *wq.WaitCondition {
 type Player struct {
 	Pid            string
 	Level          Level
-	IsPlaying      bool          //是否正在对局
-	IsAcceptInvite bool          //是否接受邀请
-	WaitCond       WaitCondition //等待对局条件
+	IsPlaying      bool           //是否正在对局
+	IsAcceptInvite bool           //是否接受邀请
+	WaitCond       *WaitCondition //等待对局条件
 }
 
 func (p *Player) ToMsg() *wq.Player {
@@ -92,7 +106,7 @@ func (p *Player) ToMsg() *wq.Player {
 
 type PlayerSetting struct {
 	IsAcceptInvite bool
-	WaitCond       WaitCondition
+	WaitCond       *WaitCondition
 }
 
 func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
@@ -103,7 +117,7 @@ func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
 }
 
 type ClientProxy struct {
-	Conn   net.Conn    //read from conn
+	Conn   net.Conn     //read from conn
 	Down   chan *wq.Msg //clients can write to down
 	Player *Player
 }
@@ -198,14 +212,43 @@ type Game struct {
 }
 
 var (
-	serverPipe   chan *ClientProxyMsg = make(chan *ClientProxyMsg)
+	serverPipe   chan *ClientProxyMsg   = make(chan *ClientProxyMsg)
 	gamePipes    map[int32]chan *wq.Msg = map[int32]chan *wq.Msg{}
-	clientProxys []*ClientProxy      = []*ClientProxy{}
+	clientProxys []*ClientProxy         = []*ClientProxy{}
 )
 
-func CreateGame(cond *InviteCondition,cp1 *ClientProxy, cp2 *ClientProxy) {
+func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) {
 	game := &Game{}
 	log.Printf("game=%v\n", game)
+}
+
+type IdPool struct {
+	length int32
+	nums []int32
+}
+
+func InitIdPool(length int32) *IdPool {
+	idpool := &IdPool{length: length}
+	var i int32
+	for i=1;i<=length;i++ {
+		idpool.nums = append(idpool.nums,i)
+	}
+	return idpool
+}
+
+func (idpool *IdPool) GetId() int32 {
+	if len(idpool.nums) > 0 {
+		idpool.nums = idpool.nums[1:]
+		return idpool.nums[0]
+	}else{
+		idpool.nums.length += 1
+		idpool.nums = append(idpool.nums,idpool.nums.length)
+		return idpool.nums.length
+	}
+}
+
+func (idpool *IdPool) PutId(id int32) {
+	idpool.nums = append(idpool.nums,id)
 }
 
 func GetPlayer(player *Player, pid string, passwd string) bool {
@@ -221,8 +264,8 @@ func GetPlayer(player *Player, pid string, passwd string) bool {
 	}
 }
 
-func DefaultWaitCondition() WaitCondition {
-	return WaitCondition{
+func DefaultWaitCondition() *WaitCondition {
+	return &WaitCondition{
 		LevelDiff:  0,
 		MinSeconds: 1200, MaxSeconds: 1200,
 		MinCountdown: 30, MaxCountdown: 30,
@@ -263,7 +306,7 @@ func ValueInRange(v, min, max int32) bool {
 
 /* inviting from p1,p2 is waiting */
 func ConditionMatch(cond *InviteCondition, p1 *Player, p2 *Player) bool {
-	var wd WaitCondition = p2.WaitCond
+	var wd *WaitCondition = p2.WaitCond
 	//level cond
 	min1, max1 := LevelRange(p1.Level, cond.LevelDiff)
 	min2, max2 := LevelRange(p2.Level, wd.LevelDiff)
@@ -293,7 +336,7 @@ func Abs(n int32) int32 {
 
 /*
 inviting from p1 to p2
-贴目和让子自动生成
+贴目和让子值自动生成
 */
 func MakeRule(cond InviteCondition, p1 Player, p2 Player) Rule {
 	rule := Rule{}
@@ -344,16 +387,19 @@ func ServerLoop() {
 			}
 		// PlayerSetting
 		case *wq.Msg_PlayerSetting:
+			playerSetting := msg.GetPlayerSetting()
+			clientProxy.Player.IsAcceptInvite = playerSetting.GetIsAcceptInvite()
+			clientProxy.Player.WaitCond = ToWaitCondition(playerSetting.GetWaitCond())
 		// InviteAuto
 		case *wq.Msg_InviteAuto:
 			inviteCondition := ToInviteCondition(msg.GetInviteAuto().GetInviteCondition())
-			fmt.Printf("inviteCondition=%v\n",inviteCondition)
-			InviteAutoMatch(inviteCondition,clientProxy)
+			fmt.Printf("inviteCondition=%v\n", inviteCondition)
+			InviteAutoMatch(inviteCondition, clientProxy)
 		// InvitePlayer
 		case *wq.Msg_InvitePlayer:
 			targetPid := msg.GetInvitePlayer().GetPid()
 			inviteCondition := ToInviteCondition(msg.GetInvitePlayer().GetInviteCondition())
-			InvitePlayerMatch(inviteCondition,clientProxy,targetPid)
+			InvitePlayerMatch(inviteCondition, clientProxy, targetPid)
 		default:
 		} //switch
 	} //for
@@ -361,10 +407,10 @@ func ServerLoop() {
 
 /* search ClientProxy by pid,return index */
 func SearchClientProxy(pid string) int {
-	for index,cp := range clientProxys {
+	for index, cp := range clientProxys {
 		if cp.Player.Pid == pid {
 			// finded
-			return index 
+			return index
 		}
 	}
 	// not find
@@ -372,32 +418,32 @@ func SearchClientProxy(pid string) int {
 }
 
 func MakeInviteFailMsg(reason string) *wq.Msg {
-	return &wq.Msg{ Union: &wq.Msg_InviteFail{ &wq.InviteFail{Reason: reason} } }
+	return &wq.Msg{Union: &wq.Msg_InviteFail{&wq.InviteFail{Reason: reason}}}
 }
 
-func InviteAutoMatch(cond *InviteCondition,cp *ClientProxy) {
-	for _,clientProxy := range clientProxys {
-		if ConditionMatch(cond,cp.Player,clientProxy.Player) && !clientProxy.Player.IsPlaying {
-			CreateGame(cond,cp,clientProxy)
+func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
+	for _, clientProxy := range clientProxys {
+		if ConditionMatch(cond, cp.Player, clientProxy.Player) && !clientProxy.Player.IsPlaying {
+			CreateGame(cond, cp, clientProxy)
 			return
 		}
 	}
 	cp.Down <- MakeInviteFailMsg("no condition matched player")
 }
 
-func InvitePlayerMatch(cond *InviteCondition,cp *ClientProxy,pid string) {
-	if index := SearchClientProxy(pid);index >= 0{
+func InvitePlayerMatch(cond *InviteCondition, cp *ClientProxy, pid string) {
+	if index := SearchClientProxy(pid); index >= 0 {
 		clientProxy := clientProxys[index]
-		if ConditionMatch(cond,cp.Player,clientProxy.Player) {
+		if ConditionMatch(cond, cp.Player, clientProxy.Player) {
 			if !clientProxy.Player.IsPlaying {
-				CreateGame(cond,cp,clientProxy)
-			}else{
+				CreateGame(cond, cp, clientProxy)
+			} else {
 				cp.Down <- MakeInviteFailMsg("the player is playing")
 			}
-		}else{
+		} else {
 			cp.Down <- MakeInviteFailMsg("condition not match")
 		}
-	}else{
+	} else {
 		cp.Down <- MakeInviteFailMsg("can't find the player")
 	}
 }
