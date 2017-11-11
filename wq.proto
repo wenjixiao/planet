@@ -11,6 +11,7 @@ message Msg{
 		InviteAuto inviteAuto = 5;
 		InvitePlayer invitePlayer = 6;
 		InviteFail inviteFail = 7;
+		CountBackward countBackward = 8;
 	}
 }
 
@@ -53,6 +54,10 @@ message InviteCondition {
 
 message InviteFail {
 	string reason = 1;
+}
+
+message CountBackward {
+	int32 num = 1;
 }
 
 message Login{

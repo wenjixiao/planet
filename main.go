@@ -251,9 +251,25 @@ func NewGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
 	return game
 }
 
+/* 倒数五个数 */
+func PrepairFiveSeconds(game *Game) {
+	timer := time.NewTimer(time.Second)
+	var num int32 = 5
+	for num > 0 {
+		<-timer.C
+		for _,clientProxy := range game.PlayerCps {
+			clientProxy.Down <- &wq.Msg{ Union: &wq.Msg_CountBackward{&wq.CountBackward{Num: num}} }	
+		}
+		num--
+	}
+}
+
+/* #todo# 如果断线了怎么办？ */
 func GameLoop(gamePipe chan *wq.Msg, game *Game) {
+	// game have a inner timer,it always run like the real world
 	timer := time.NewTimer(time.Second)
 	gamePipes[game.Id] = gamePipe
+	PrepairFiveSeconds(game)
 	for {
 		select {
 		case msg := <-gamePipe:
@@ -459,7 +475,7 @@ func SearchClientProxy(pid string) int {
 	return -1
 }
 
-func MakeInviteFailMsg(reason string) *wq.Msg {
+func NewInviteFail(reason string) *wq.Msg {
 	return &wq.Msg{Union: &wq.Msg_InviteFail{&wq.InviteFail{Reason: reason}}}
 }
 
@@ -471,7 +487,7 @@ func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 			return
 		}
 	}
-	cp.Down <- MakeInviteFailMsg("no condition matched player")
+	cp.Down <- NewInviteFail("no condition matched player")
 }
 
 func InvitePlayerMatch(cond *InviteCondition, cp *ClientProxy, pid string) {
@@ -481,13 +497,13 @@ func InvitePlayerMatch(cond *InviteCondition, cp *ClientProxy, pid string) {
 			if !clientProxy.Player.IsPlaying {
 				NewGame(cond, cp, clientProxy)
 			} else {
-				cp.Down <- MakeInviteFailMsg("the player is playing")
+				cp.Down <- NewInviteFail("the player is playing")
 			}
 		} else {
-			cp.Down <- MakeInviteFailMsg("condition not match")
+			cp.Down <- NewInviteFail("condition not match")
 		}
 	} else {
-		cp.Down <- MakeInviteFailMsg("can't find the player")
+		cp.Down <- NewInviteFail("can't find the player")
 	}
 }
 
