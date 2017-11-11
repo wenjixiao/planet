@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
 const (
@@ -231,13 +232,13 @@ var (
 	serverPipe   chan *ClientProxyMsg   = make(chan *ClientProxyMsg)
 	gamePipes    map[int32]chan *wq.Msg = map[int32]chan *wq.Msg{}
 	clientProxys []*ClientProxy         = []*ClientProxy{}
-	idpool       *IdPool                = InitIdPool(IdPoolSize)
+	idpool       *IdPool                = NewIdPool(IdPoolSize)
 )
 
-func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
+func NewGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
 	game := &Game{Id: idpool.GetId()}
 	game.Status = Inited
-	game.Rule = MakeRule(cond, cp1.Player, cp2.Player)
+	game.Rule = NewRule(cond, cp1.Player, cp2.Player)
 	if game.Rule.Handicap == 0 {
 		game.LastColor = Black
 	} else {
@@ -250,22 +251,25 @@ func CreateGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game
 	return game
 }
 
-func GameLoop(gamePipe chan *wq.Msg,game *Game) {
+func GameLoop(gamePipe chan *wq.Msg, game *Game) {
+	timer := time.NewTimer(time.Second)
 	gamePipes[game.Id] = gamePipe
 	for {
 		select {
-			case msg := <- gamePipe:
-				log.Printf("get msg for game:%v\n",msg)
+		case msg := <-gamePipe:
+			log.Printf("get msg for game:%v\n", msg)
+		case <-timer.C:
+			// 读秒
 		}
 	}
 }
 
 type IdPool struct {
 	Size int32
-	Nums   []int32
+	Nums []int32
 }
 
-func InitIdPool(size int32) *IdPool {
+func NewIdPool(size int32) *IdPool {
 	idpool := &IdPool{Size: size}
 	var i int32
 	for i = 1; i <= size; i++ {
@@ -376,7 +380,7 @@ func Abs(n int32) int32 {
 inviting from p1 to p2
 贴目和让子值自动生成
 */
-func MakeRule(cond *InviteCondition, p1 *Player, p2 *Player) *Rule {
+func NewRule(cond *InviteCondition, p1 *Player, p2 *Player) *Rule {
 	rule := &Rule{}
 	rule.Seconds = cond.Seconds
 	rule.Counting = cond.Counting
@@ -462,8 +466,8 @@ func MakeInviteFailMsg(reason string) *wq.Msg {
 func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 	for _, clientProxy := range clientProxys {
 		if ConditionMatch(cond, cp.Player, clientProxy.Player) && !clientProxy.Player.IsPlaying {
-			game := CreateGame(cond, cp, clientProxy)
-			go GameLoop(make(chan *wq.Msg),game)
+			game := NewGame(cond, cp, clientProxy)
+			go GameLoop(make(chan *wq.Msg), game)
 			return
 		}
 	}
@@ -475,7 +479,7 @@ func InvitePlayerMatch(cond *InviteCondition, cp *ClientProxy, pid string) {
 		clientProxy := clientProxys[index]
 		if ConditionMatch(cond, cp.Player, clientProxy.Player) {
 			if !clientProxy.Player.IsPlaying {
-				CreateGame(cond, cp, clientProxy)
+				NewGame(cond, cp, clientProxy)
 			} else {
 				cp.Down <- MakeInviteFailMsg("the player is playing")
 			}
