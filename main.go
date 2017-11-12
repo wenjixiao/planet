@@ -269,11 +269,9 @@ func PrepairFiveSeconds(game *Game) {
 	}
 }
 
-/* #todo# 如果断线了怎么办？ */
 func GameLoop(gamePipe chan *wq.Msg, gameConnBrokenPipe chan *ClientProxy, game *Game) {
-	// game have a inner timer,it always run like the real world
+	// game have a inner timer,it always run like in real world
 	timer := time.NewTimer(time.Second)
-	gamePipes[game.Id] = gamePipe
 	PrepairFiveSeconds(game)
 	for {
 		select {
@@ -629,10 +627,18 @@ func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
 		log.Fatal(err)
 	}
 	log.Printf("#the MSG#: %s\n", msg)
-	serverPipe <- &ClientProxyMsg{clientProxy, msg}
-	//*todo* here we should dispatch the msg to 1:Server or a 2:Game
+	// 分发到相应的地方
+	DispatchMsg(msg,clientProxy)
+}
+
+/*
+ *todo* here we should dispatch the msg to 1:Server or a 2:Game
+ 确定是server的，还是game的；确定是那个game的
+ */
+func DispatchMsg(msg *wq.Msg,clientProxy *ClientProxy) {
+	cpm := &ClientProxyMsg{clientProxy, msg}
+	serverPipe <- cpm
 	log.Println("write msg to serverPipe,ok")
-	// WriteMsg(msg, clientProxy.conn)
 }
 
 func AddHeader(msgBytes []byte) []byte {
