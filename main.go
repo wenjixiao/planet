@@ -126,9 +126,12 @@ func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
 }
 
 type ClientProxy struct {
-	Conn   net.Conn     //read from conn
-	Down   chan *wq.Msg //clients can write to down
-	Player *Player
+	IsConnBroken    bool
+	Conn            net.Conn     //read from conn
+	Down            chan *wq.Msg //clients can write to down
+	Player          *Player
+	PlayingGameIds  []int32 // 正在下的棋
+	WatchingGameIds []int32 // 观看的棋
 }
 
 type ClientProxyMsg struct {
@@ -229,10 +232,12 @@ type Game struct {
 }
 
 var (
-	serverPipe   chan *ClientProxyMsg   = make(chan *ClientProxyMsg)
-	gamePipes    map[int32]chan *wq.Msg = map[int32]chan *wq.Msg{}
-	clientProxys []*ClientProxy         = []*ClientProxy{}
-	idpool       *IdPool                = NewIdPool(IdPoolSize)
+	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
+	serverConnBrokenPipe chan *ClientProxy           = make(chan *ClientProxy)
+	gamePipes            map[int32]chan *wq.Msg      = map[int32]chan *wq.Msg{}
+	gameConnBrokenPipes  map[int32]chan *ClientProxy = map[int32]chan *ClientProxy{}
+	clientProxys         []*ClientProxy              = []*ClientProxy{}
+	idpool               *IdPool                     = NewIdPool(IdPoolSize)
 )
 
 func NewGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
@@ -257,15 +262,15 @@ func PrepairFiveSeconds(game *Game) {
 	var num int32 = 5
 	for num > 0 {
 		<-timer.C
-		for _,clientProxy := range game.PlayerCps {
-			clientProxy.Down <- &wq.Msg{ Union: &wq.Msg_CountBackward{&wq.CountBackward{Num: num}} }	
+		for _, clientProxy := range game.PlayerCps {
+			clientProxy.Down <- &wq.Msg{Union: &wq.Msg_CountBackward{&wq.CountBackward{Num: num}}}
 		}
 		num--
 	}
 }
 
 /* #todo# 如果断线了怎么办？ */
-func GameLoop(gamePipe chan *wq.Msg, game *Game) {
+func GameLoop(gamePipe chan *wq.Msg, gameConnBrokenPipe chan *ClientProxy, game *Game) {
 	// game have a inner timer,it always run like the real world
 	timer := time.NewTimer(time.Second)
 	gamePipes[game.Id] = gamePipe
@@ -274,6 +279,7 @@ func GameLoop(gamePipe chan *wq.Msg, game *Game) {
 		select {
 		case msg := <-gamePipe:
 			log.Printf("get msg for game:%v\n", msg)
+		case <-gameConnBrokenPipe:
 		case <-timer.C:
 			// 读秒
 		}
@@ -415,51 +421,54 @@ func NewRule(cond *InviteCondition, p1 *Player, p2 *Player) *Rule {
 
 func ServerLoop() {
 	for {
-		log.Println("read serverPipe")
-		clientProxyMsg := <-serverPipe
-		log.Printf("msg from serverPipe: %v\n", clientProxyMsg)
-		msg := clientProxyMsg.Msg
-		clientProxy := clientProxyMsg.Cp
-		switch msg.Union.(type) {
-		// login
-		case *wq.Msg_Login:
-			login := msg.GetLogin()
-			player := &Player{}
-			if GetPlayer(player, login.Pid, login.Passwd) {
-				clientProxy.Player = player
-				msgOk := &wq.Msg{
-					Union: &wq.Msg_LoginReturnOk{
-						&wq.LoginReturnOk{Player: player.ToMsg()},
-					},
-				}
-				clientProxy.Down <- msgOk
-			} else {
-				msgFail := &wq.Msg{
-					Union: &wq.Msg_LoginReturnFail{
-						&wq.LoginReturnFail{
-							Reason: "pid or password error!",
+		select {
+		case clientProxyMsg := <-serverPipe:
+			log.Printf("msg from serverPipe: %v\n", clientProxyMsg)
+			msg := clientProxyMsg.Msg
+			clientProxy := clientProxyMsg.Cp
+			switch msg.Union.(type) {
+			// login
+			case *wq.Msg_Login:
+				login := msg.GetLogin()
+				player := &Player{}
+				if GetPlayer(player, login.Pid, login.Passwd) {
+					clientProxy.Player = player
+					msgOk := &wq.Msg{
+						Union: &wq.Msg_LoginReturnOk{
+							&wq.LoginReturnOk{Player: player.ToMsg()},
 						},
-					},
+					}
+					clientProxy.Down <- msgOk
+				} else {
+					msgFail := &wq.Msg{
+						Union: &wq.Msg_LoginReturnFail{
+							&wq.LoginReturnFail{
+								Reason: "pid or password error!",
+							},
+						},
+					}
+					clientProxy.Down <- msgFail
 				}
-				clientProxy.Down <- msgFail
-			}
-		// PlayerSetting
-		case *wq.Msg_PlayerSetting:
-			playerSetting := msg.GetPlayerSetting()
-			clientProxy.Player.IsAcceptInvite = playerSetting.GetIsAcceptInvite()
-			clientProxy.Player.WaitCond = ToWaitCondition(playerSetting.GetWaitCond())
-		// InviteAuto
-		case *wq.Msg_InviteAuto:
-			inviteCondition := ToInviteCondition(msg.GetInviteAuto().GetInviteCondition())
-			fmt.Printf("inviteCondition=%v\n", inviteCondition)
-			InviteAutoMatch(inviteCondition, clientProxy)
-		// InvitePlayer
-		case *wq.Msg_InvitePlayer:
-			targetPid := msg.GetInvitePlayer().GetPid()
-			inviteCondition := ToInviteCondition(msg.GetInvitePlayer().GetInviteCondition())
-			InvitePlayerMatch(inviteCondition, clientProxy, targetPid)
-		default:
-		} //switch
+				// PlayerSetting
+			case *wq.Msg_PlayerSetting:
+				playerSetting := msg.GetPlayerSetting()
+				clientProxy.Player.IsAcceptInvite = playerSetting.GetIsAcceptInvite()
+				clientProxy.Player.WaitCond = ToWaitCondition(playerSetting.GetWaitCond())
+				// InviteAuto
+			case *wq.Msg_InviteAuto:
+				inviteCondition := ToInviteCondition(msg.GetInviteAuto().GetInviteCondition())
+				fmt.Printf("inviteCondition=%v\n", inviteCondition)
+				InviteAutoMatch(inviteCondition, clientProxy)
+				// InvitePlayer
+			case *wq.Msg_InvitePlayer:
+				targetPid := msg.GetInvitePlayer().GetPid()
+				inviteCondition := ToInviteCondition(msg.GetInvitePlayer().GetInviteCondition())
+				InvitePlayerMatch(inviteCondition, clientProxy, targetPid)
+			default:
+			} //switch
+		case cp := <-serverConnBrokenPipe:
+			log.Printf("conn broken: %v\n", cp)
+		}
 	} //for
 }
 
@@ -482,8 +491,8 @@ func NewInviteFail(reason string) *wq.Msg {
 func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 	for _, clientProxy := range clientProxys {
 		if ConditionMatch(cond, cp.Player, clientProxy.Player) && !clientProxy.Player.IsPlaying {
-			game := NewGame(cond, cp, clientProxy)
-			go GameLoop(make(chan *wq.Msg), game)
+			_ = NewGame(cond, cp, clientProxy)
+			// go GameLoop(make(chan *wq.Msg), game)
 			return
 		}
 	}
@@ -546,11 +555,11 @@ func HandleUp(clientProxy *ClientProxy) {
 	head := uint32(0)
 	bodyLen := 0 //bodyLen is a flag,when readed head,but body'len is not enougth
 
-	for {
+	for !clientProxy.IsConnBroken {
 		n, err := clientProxy.Conn.Read(readBuf)
 		if err != nil {
 			if err == io.EOF {
-				ConnBroken(clientProxy.Conn)
+				ConnBroken(clientProxy)
 			} else {
 				log.Fatalf("Read error: %s\n", err)
 			}
@@ -589,14 +598,26 @@ func HandleUp(clientProxy *ClientProxy) {
 }
 
 func HandleDown(clientProxy *ClientProxy) {
-	for {
+	for !clientProxy.IsConnBroken {
 		msg := <-clientProxy.Down
 		WriteMsg(msg, clientProxy.Conn)
 	}
 }
 
-func ConnBroken(conn net.Conn) {
+/* 每一次有新连接到来时，都新建一个clientproxy,所以，连接断裂时，要抛弃旧的 */
+func ConnBroken(clientProxy *ClientProxy) {
 	//when conn broken,we should reset the message buffer too!
+	clientProxy.IsConnBroken = true
+	// tell server
+	serverConnBrokenPipe <- clientProxy
+	// tell game
+	for _, gameId := range append(clientProxy.PlayingGameIds, clientProxy.WatchingGameIds...) {
+		if gameConnBrokenPipe, found := gameConnBrokenPipes[gameId]; found {
+			gameConnBrokenPipe <- clientProxy
+		} else {
+			log.Fatalf("can't find the gameId: %d\n", gameId)
+		}
+	}
 	log.Println("****line broken****")
 }
 

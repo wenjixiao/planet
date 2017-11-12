@@ -6,6 +6,6 @@ import (
 )
 
 func TestInterface(t *testing.T) {
-	idpool := InitIdPool(10)
-	fmt.Printf("id pool:%v\n",idpool)
+	var myb bool
+	fmt.Printf("default bool is %v\n",myb)
 }
