@@ -231,10 +231,15 @@ type Game struct {
 	WatcherCps []*ClientProxy
 }
 
+type InnerMsg struct {
+	MsgType int32
+	clientProxy *ClientProxy
+}
+
 var (
 	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
 	serverConnBrokenPipe chan *ClientProxy           = make(chan *ClientProxy)
-	gamePipes            map[int32]chan *wq.Msg      = map[int32]chan *wq.Msg{}
+	gamePipes            map[int32]chan *ClientProxyMsg      = map[int32]chan *ClientProxyMsg{}
 	gameConnBrokenPipes  map[int32]chan *ClientProxy = map[int32]chan *ClientProxy{}
 	clientProxys         []*ClientProxy              = []*ClientProxy{}
 	idpool               *IdPool                     = NewIdPool(IdPoolSize)
@@ -488,7 +493,9 @@ func NewInviteFail(reason string) *wq.Msg {
 
 func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 	for _, clientProxy := range clientProxys {
-		if ConditionMatch(cond, cp.Player, clientProxy.Player) && !clientProxy.Player.IsPlaying {
+		if ConditionMatch(cond, cp.Player, clientProxy.Player) && 
+			!clientProxy.Player.IsPlaying && 
+			cp != clientProxy {
 			_ = NewGame(cond, cp, clientProxy)
 			// go GameLoop(make(chan *wq.Msg), game)
 			return
@@ -557,9 +564,10 @@ func HandleUp(clientProxy *ClientProxy) {
 		n, err := clientProxy.Conn.Read(readBuf)
 		if err != nil {
 			if err == io.EOF {
-				ConnBroken(clientProxy)
+				ConnClosed(clientProxy)
 			} else {
-				log.Fatalf("Read error: %s\n", err)
+				log.Printf("Read error: %s\n", err)
+				ConnBroken(clientProxy)
 			}
 			break
 		}
@@ -602,6 +610,18 @@ func HandleDown(clientProxy *ClientProxy) {
 	}
 }
 
+/* 生成一个内部的消息 Logout，发送给serverPipe */
+func ConnClosed(clientProxy *ClientProxy) {
+	log.Println("****line closed****")
+	serverPipe <- &wq.Msg{
+		Union: &wq.Msg_Logout{
+			&wq.Logout{
+				Pid
+			}
+		}
+	}
+}
+
 /* 每一次有新连接到来时，都新建一个clientproxy,所以，连接断裂时，要抛弃旧的 */
 func ConnBroken(clientProxy *ClientProxy) {
 	//when conn broken,we should reset the message buffer too!
@@ -633,12 +653,22 @@ func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
 
 /*
  *todo* here we should dispatch the msg to 1:Server or a 2:Game
- 确定是server的，还是game的；确定是那个game的
+ 1,确定是server的，还是game的；2,确定是那个game的
  */
 func DispatchMsg(msg *wq.Msg,clientProxy *ClientProxy) {
 	cpm := &ClientProxyMsg{clientProxy, msg}
-	serverPipe <- cpm
-	log.Println("write msg to serverPipe,ok")
+	gameId := msg.GetId()
+	if gameId > 0 {
+		// give msg to #gameId# game
+		if gamePipe,found := gamePipes[gameId]; found {
+			gamePipe <- cpm
+		}else{
+			log.Fatalf("not find game by id: %v\n",gameId)
+		}
+	}else{
+		// give msg to server
+		serverPipe <- cpm
+	}
 }
 
 func AddHeader(msgBytes []byte) []byte {
