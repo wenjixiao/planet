@@ -3,15 +3,16 @@ syntax="proto3";
 package wq;
 
 message Msg{
+	int32 id = 1;
 	oneof union {
-		Login login = 1;
-		LoginReturnOk loginReturnOk = 2;
-		LoginReturnFail loginReturnFail = 3;
-		PlayerSetting playerSetting = 4;
-		InviteAuto inviteAuto = 5;
-		InvitePlayer invitePlayer = 6;
-		InviteFail inviteFail = 7;
-		CountBackward countBackward = 8;
+		Login login = 2;
+		LoginReturnOk loginReturnOk = 3;
+		LoginReturnFail loginReturnFail = 4;
+		PlayerSetting playerSetting = 5;
+		InviteAuto inviteAuto = 6;
+		InvitePlayer invitePlayer = 7;
+		InviteFail inviteFail = 8;
+		CountBackward countBackward = 9;
 	}
 }
 

@@ -29,6 +29,9 @@ const (
 	Running = 1
 	Paused  = 2
 	Ended   = 3
+	
+	InnerConnBroken = 0
+	InnerConnClosed = 1
 )
 
 type Level struct {
@@ -238,9 +241,9 @@ type InnerMsg struct {
 
 var (
 	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
-	serverConnBrokenPipe chan *ClientProxy           = make(chan *ClientProxy)
+	serverInnerPipe chan *InnerMsg           = make(chan *InnerMsg)
 	gamePipes            map[int32]chan *ClientProxyMsg      = map[int32]chan *ClientProxyMsg{}
-	gameConnBrokenPipes  map[int32]chan *ClientProxy = map[int32]chan *ClientProxy{}
+	gameInnerPipes  map[int32]chan *InnerMsg = map[int32]chan *InnerMsg{}
 	clientProxys         []*ClientProxy              = []*ClientProxy{}
 	idpool               *IdPool                     = NewIdPool(IdPoolSize)
 )
@@ -469,8 +472,8 @@ func ServerLoop() {
 				InvitePlayerMatch(inviteCondition, clientProxy, targetPid)
 			default:
 			} //switch
-		case cp := <-serverConnBrokenPipe:
-			log.Printf("conn broken: %v\n", cp)
+		case innerMsg := <-serverInnerPipe:
+			log.Printf("inner msg: %v\n", innerMsg)
 		}
 	} //for
 }
@@ -610,28 +613,22 @@ func HandleDown(clientProxy *ClientProxy) {
 	}
 }
 
-/* 生成一个内部的消息 Logout，发送给serverPipe */
 func ConnClosed(clientProxy *ClientProxy) {
 	log.Println("****line closed****")
-	serverPipe <- &wq.Msg{
-		Union: &wq.Msg_Logout{
-			&wq.Logout{
-				Pid
-			}
-		}
-	}
+	serverInnerPipe <- &InnerMsg{InnerConnClosed,clientProxy}
 }
 
 /* 每一次有新连接到来时，都新建一个clientproxy,所以，连接断裂时，要抛弃旧的 */
 func ConnBroken(clientProxy *ClientProxy) {
 	//when conn broken,we should reset the message buffer too!
 	clientProxy.IsConnBroken = true
+	innerMsg := &InnerMsg{InnerConnBroken,clientProxy}
 	// tell server
-	serverConnBrokenPipe <- clientProxy
+	serverInnerPipe <- innerMsg
 	// tell game
 	for _, gameId := range append(clientProxy.PlayingGameIds, clientProxy.WatchingGameIds...) {
-		if gameConnBrokenPipe, found := gameConnBrokenPipes[gameId]; found {
-			gameConnBrokenPipe <- clientProxy
+		if gameInnerPipe, found := gameInnerPipes[gameId]; found {
+			gameInnerPipe <- innerMsg
 		} else {
 			log.Fatalf("can't find the gameId: %d\n", gameId)
 		}

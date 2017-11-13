@@ -2,18 +2,56 @@ import socket
 import struct
 import wx
 from wx.lib.pubsub import pub
-from threading import Thread
+import threading
 from socketmsg import SocketReader
 import wq_pb2 as wq
 
 player = None
 
-class ThreadSocketReader(Thread,SocketReader):
+exitFlag = False
+exitFlagLock = threading.Lock()
+
+class ThreadSocketReader(threading.Thread):
     def __init__(self,socket):
-        Thread.__init__(self)
-        SocketReader.__init__(self,socket)
+		threading.Thread.__init__(self)
+		self.socketBufSize = 1024
+		self.socket = socket
+		self.buf = bytes()
+		self.headSize = 4
     def run(self):
-        self.readMessage()
+		self.readMessage()    	
+    def readMessage(self):
+        print("start read socket...")
+        try:
+            while True:
+            	exitFlagLock.acquire()
+            	if exitFlag:
+            		break
+            	exitFlagLock.release()
+            	# when the main thread 'shutdown' the socket,recv return immediately,NOT exception
+                data = self.socket.recv(self.socketBufSize)
+                if not data: break
+                self.buf += data
+                while True:
+                    if len(self.buf) < self.headSize:
+                        print("dataSize < headSize!")
+                        break
+                    bodySize, = struct.unpack('<I',self.buf[:self.headSize])
+                    print("bodySize={}".format(bodySize))
+                    if len(self.buf) < self.headSize+bodySize:
+                        print("message data not enougth!")
+                        break
+                    bin = self.buf[self.headSize:self.headSize+bodySize]
+                    self.processMessage(bin)
+                    self.buf = self.buf[self.headSize+bodySize:]
+        except Exception,e: 
+        	print e
+        finally:
+			self.socket.close()
+			print "socket reader closed"
+    def send(self,bin):
+        header = struct.pack('I',len(bin))
+        self.socket.sendall(header+bin)
     def processMessage(self,bin):
         print("---------------")
         s = wq.Msg()
@@ -38,6 +76,7 @@ class WeiqiClient(wx.Frame):
         self.invitePlayerMsgBt = wx.Button(panel,wx.ID_ANY,'InvitePlayer')
         self.playerSettingMsgBt = wx.Button(panel,wx.ID_ANY,'player setting')
         
+        self.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
         self.Bind(wx.EVT_BUTTON,self.OnConnectBt,source=self.connectBt)
         self.Bind(wx.EVT_BUTTON,self.OnLoginMsgBt,source=self.loginMsgBt)
         self.Bind(wx.EVT_BUTTON,self.OnInviteAutoMsgBt,source=self.inviteAutoMsgBt)
@@ -112,6 +151,13 @@ class WeiqiClient(wx.Frame):
         self.sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
         self.sock.connect(self.addr)
         ThreadSocketReader(self.sock).start()
+    def OnCloseWindow(self,e):
+    	exitFlagLock.acquire()
+    	exitFlag = True
+    	exitFlagLock.release()
+    	# shutdown make the socket reading thread exit
+    	self.sock.shutdown(socket.SHUT_RDWR)
+    	self.Destroy()
 
 if __name__ == '__main__':
     app = wx.App()
