@@ -29,7 +29,7 @@ const (
 	Running = 1
 	Paused  = 2
 	Ended   = 3
-	
+
 	InnerConnBroken = 0
 	InnerConnClosed = 1
 )
@@ -129,10 +129,9 @@ func (ps *PlayerSetting) ToMsg() *wq.PlayerSetting {
 }
 
 type ClientProxy struct {
-	IsConnBroken    bool
-	Conn            net.Conn     //read from conn
-	Down            chan *wq.Msg //clients can write to down
-	Player          *Player
+	Conn          net.Conn     //read from conn
+	Down          chan *wq.Msg //clients can write to down
+	Player        *Player
 	PlayingGames  []*Game // 正在下的棋
 	WatchingGames []*Game // 观看的棋
 }
@@ -223,31 +222,31 @@ type Time struct {
 }
 
 type Game struct {
-	Id         int32
-	Rule       *Rule
-	Status     int32
-	LastColor  int32 // last stone color,knowing who's time is flowing
-	Stones     []Stone
-	Result     Result
-	PlayerCps  []*ClientProxy
-	ConnBrokens []int32 // indexes of broken conns
-	Times      []Time
-	WatcherCps []*ClientProxy
-	MsgPipe chan *ClientProxyMsg
+	Id           int32
+	Rule         *Rule
+	Status       int32
+	LastColor    int32 // last stone color,knowing who's time is flowing
+	Stones       []Stone
+	Result       Result
+	PlayerCps    []*ClientProxy
+	Times        []Time
+	WatcherCps   []*ClientProxy
+	MsgPipe      chan *ClientProxyMsg
 	InnerMsgPipe chan *InnerMsg
 }
 
 type InnerMsg struct {
-	MsgType int32
+	MsgType     int32
 	clientProxy *ClientProxy
 }
 
 var (
-	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
-	serverInnerPipe chan *InnerMsg           = make(chan *InnerMsg)
-	games []*Game = []*Game{}
-	clientProxys         []*ClientProxy              = []*ClientProxy{}
-	idpool               *IdPool                     = NewIdPool(IdPoolSize)
+	serverPipe         chan *ClientProxyMsg = make(chan *ClientProxyMsg)
+	serverInnerPipe    chan *InnerMsg       = make(chan *InnerMsg)
+	games              []*Game              = []*Game{}
+	clientProxys       []*ClientProxy       = []*ClientProxy{}
+	brokenClientProxys []*ClientProxy       = []*ClientProxy{}
+	idpool             *IdPool              = NewIdPool(IdPoolSize)
 )
 
 func NewGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
@@ -278,15 +277,15 @@ func GameInitedLoop(game *Game) {
 			for _, clientProxy := range game.PlayerCps {
 				clientProxy.Down <- &wq.Msg{
 					Union: &wq.Msg_CountBackward{
-						&wq.CountBackward{Id: game.Id,Num: num}},
-					}
+						&wq.CountBackward{Id: game.Id, Num: num}},
+				}
 			}
 			num--
 		case im := <-game.InnerMsgPipe:
 			// maybe conn broken or socket closed(user leave)
 			switch im.MsgType {
 			case InnerConnBroken:
-				
+
 			case InnerConnClosed:
 			}
 		}
@@ -296,13 +295,13 @@ func GameInitedLoop(game *Game) {
 }
 
 /* paused status loop */
-func GamePausedLoop(game *Game){
+func GamePausedLoop(game *Game) {
 	log.Println("***game Paused status***")
 	game.Status = Paused
 }
 
 /* running status loop */
-func GameRunningLoop(game *Game){
+func GameRunningLoop(game *Game) {
 	log.Println("***game Running status***")
 	game.Status = Running
 	// game have a inner timer,it always run like in real world
@@ -504,10 +503,9 @@ func ServerLoop() {
 	} //for
 }
 
-/* search ClientProxy by pid,return index */
-func SearchClientProxy(pid string) int {
+func SearchClientProxy(clientProxys []*ClientProxy, predicate func(clientProxy *ClientProxy) bool) int {
 	for index, cp := range clientProxys {
-		if cp.Player.Pid == pid {
+		if predicate(cp) {
 			// finded
 			return index
 		}
@@ -516,14 +514,28 @@ func SearchClientProxy(pid string) int {
 	return -1
 }
 
+/* search ClientProxy by pid,return index */
+func SearchClientProxyById(clientProxys []*ClientProxy, pid string) int {
+	return SearchClientProxy(clientProxys, func(clientProxy *ClientProxy) bool {
+		return clientProxy.Player.Pid == pid
+	})
+}
+
+/* search ClientProxy by pid,return index */
+func SearchClientProxyByAddr(clientProxys []*ClientProxy, cp *ClientProxy) int {
+	return SearchClientProxy(clientProxys, func(clientProxy *ClientProxy) bool {
+		return clientProxy == cp
+	})
+}
+
 func NewInviteFail(reason string) *wq.Msg {
 	return &wq.Msg{Union: &wq.Msg_InviteFail{&wq.InviteFail{Reason: reason}}}
 }
 
 func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 	for _, clientProxy := range clientProxys {
-		if ConditionMatch(cond, cp.Player, clientProxy.Player) && 
-			!clientProxy.Player.IsPlaying && 
+		if ConditionMatch(cond, cp.Player, clientProxy.Player) &&
+			!clientProxy.Player.IsPlaying &&
 			cp != clientProxy {
 			_ = NewGame(cond, cp, clientProxy)
 			// go (make(chan *wq.Msg), game)
@@ -534,7 +546,7 @@ func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 }
 
 func InvitePlayerMatch(cond *InviteCondition, cp *ClientProxy, pid string) {
-	if index := SearchClientProxy(pid); index >= 0 {
+	if index := SearchClientProxyById(clientProxys, pid); index >= 0 {
 		clientProxy := clientProxys[index]
 		if ConditionMatch(cond, cp.Player, clientProxy.Player) {
 			if !clientProxy.Player.IsPlaying {
@@ -587,7 +599,7 @@ func (clientProxy *ClientProxy) HandleUp() {
 	head := uint32(0)
 	bodyLen := 0 //bodyLen is a flag,when readed head,but body'len is not enougth
 
-	for !clientProxy.IsConnBroken {
+	for SearchClientProxyByAddr(brokenClientProxys, clientProxy) < 0 {
 		n, err := clientProxy.Conn.Read(readBuf)
 		if err != nil {
 			if err == io.EOF {
@@ -631,7 +643,7 @@ func (clientProxy *ClientProxy) HandleUp() {
 }
 
 func (clientProxy *ClientProxy) HandleDown() {
-	for !clientProxy.IsConnBroken {
+	for SearchClientProxyByAddr(brokenClientProxys, clientProxy) < 0 {
 		msg := <-clientProxy.Down
 		clientProxy.WriteMsg(msg)
 	}
@@ -639,14 +651,19 @@ func (clientProxy *ClientProxy) HandleDown() {
 
 func (clientProxy *ClientProxy) ConnClosed() {
 	log.Println("****line closed****")
-	serverInnerPipe <- &InnerMsg{InnerConnClosed,clientProxy}
+	serverInnerPipe <- &InnerMsg{InnerConnClosed, clientProxy}
 }
 
 /* 每一次有新连接到来时，都新建一个clientproxy,所以，连接断裂时，要抛弃旧的 */
 func (clientProxy *ClientProxy) ConnBroken() {
 	//when conn broken,we should reset the message buffer too!
-	clientProxy.IsConnBroken = true
-	innerMsg := &InnerMsg{InnerConnBroken,clientProxy}
+	if index := SearchClientProxyByAddr(clientProxys, clientProxy); index > 0 {
+		brokenClientProxys = append(brokenClientProxys, clientProxys[index])
+		clientProxys = append(clientProxys[:index], clientProxys[index+1:]...)
+	} else {
+		log.Fatal("can't find *clientProxy in server clientProxys")
+	}
+	innerMsg := &InnerMsg{InnerConnBroken, clientProxy}
 	// tell server
 	serverInnerPipe <- innerMsg
 	// tell game
@@ -671,19 +688,19 @@ func (clientProxy *ClientProxy) ProcessMsg(msgBytes []byte) {
 /*
  *todo* here we should dispatch the msg to 1:Server or a 2:Game
  1,确定是server的，还是game的；2,确定是那个game的
- */
+*/
 func (clientProxy *ClientProxy) DispatchMsg(msg *wq.Msg) {
 	cpm := &ClientProxyMsg{clientProxy, msg}
 	gameId := msg.GetId()
 	if gameId > 0 {
 		// give msg to #gameId# game
-		for _,game := range games {
+		for _, game := range games {
 			if game.Id == gameId {
 				game.MsgPipe <- cpm
 				break
 			}
 		}
-	}else{
+	} else {
 		// give msg to server
 		serverPipe <- cpm
 	}
