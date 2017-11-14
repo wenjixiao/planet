@@ -58,7 +58,8 @@ message InviteFail {
 }
 
 message CountBackward {
-	int32 num = 1;
+	int32 id = 1;
+	int32 num = 2;
 }
 
 message Login{
@@ -81,8 +82,4 @@ message InviteAuto {
 message InvitePlayer {
 	string pid = 1;
 	InviteCondition inviteCondition = 2;
-}
-
-message Logout{
-	string pid = 1;
 }

@@ -7,7 +7,7 @@ from socketmsg import SocketReader
 import wq_pb2 as wq
 
 player = None
-
+# exitFlag accessed by main thread and socket read thread,so need a lock
 exitFlag = False
 exitFlagLock = threading.Lock()
 

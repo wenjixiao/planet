@@ -133,8 +133,8 @@ type ClientProxy struct {
 	Conn            net.Conn     //read from conn
 	Down            chan *wq.Msg //clients can write to down
 	Player          *Player
-	PlayingGameIds  []int32 // 正在下的棋
-	WatchingGameIds []int32 // 观看的棋
+	PlayingGames  []*Game // 正在下的棋
+	WatchingGames []*Game // 观看的棋
 }
 
 type ClientProxyMsg struct {
@@ -226,12 +226,15 @@ type Game struct {
 	Id         int32
 	Rule       *Rule
 	Status     int32
-	LastColor  int32
+	LastColor  int32 // last stone color,knowing who's time is flowing
 	Stones     []Stone
 	Result     Result
 	PlayerCps  []*ClientProxy
+	ConnBrokens []int32 // indexes of broken conns
 	Times      []Time
 	WatcherCps []*ClientProxy
+	MsgPipe chan *ClientProxyMsg
+	InnerMsgPipe chan *InnerMsg
 }
 
 type InnerMsg struct {
@@ -242,8 +245,9 @@ type InnerMsg struct {
 var (
 	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
 	serverInnerPipe chan *InnerMsg           = make(chan *InnerMsg)
-	gamePipes            map[int32]chan *ClientProxyMsg      = map[int32]chan *ClientProxyMsg{}
-	gameInnerPipes  map[int32]chan *InnerMsg = map[int32]chan *InnerMsg{}
+	games []*Game = []*Game{}
+	// gamePipes            map[int32]chan *ClientProxyMsg      = map[int32]chan *ClientProxyMsg{}
+	// gameInnerPipes  map[int32]chan *InnerMsg = map[int32]chan *InnerMsg{}
 	clientProxys         []*ClientProxy              = []*ClientProxy{}
 	idpool               *IdPool                     = NewIdPool(IdPoolSize)
 )
@@ -264,28 +268,52 @@ func NewGame(cond *InviteCondition, cp1 *ClientProxy, cp2 *ClientProxy) *Game {
 	return game
 }
 
-/* 倒数五个数 */
-func PrepairFiveSeconds(game *Game) {
+/* init status loop */
+func GameInitedLoop(game *Game) {
+	log.Println("***game Inited status***")
 	timer := time.NewTimer(time.Second)
+	/* 倒数五个数 */
 	var num int32 = 5
 	for num > 0 {
-		<-timer.C
-		for _, clientProxy := range game.PlayerCps {
-			clientProxy.Down <- &wq.Msg{Union: &wq.Msg_CountBackward{&wq.CountBackward{Num: num}}}
+		select {
+		case <-timer.C:
+			for _, clientProxy := range game.PlayerCps {
+				clientProxy.Down <- &wq.Msg{
+					Union: &wq.Msg_CountBackward{
+						&wq.CountBackward{Id: game.Id,Num: num}},
+					}
+			}
+			num--
+		case im := <-game.InnerMsgPipe:
+			// maybe conn broken or socket closed(user leave)
+			switch im.MsgType {
+			case InnerConnBroken:
+				
+			case InnerConnClosed:
+			}
 		}
-		num--
 	}
+	// 没什么异常的话，转入running状态
+	GameRunningLoop(game)
 }
 
-func GameLoop(gamePipe chan *wq.Msg, gameConnBrokenPipe chan *ClientProxy, game *Game) {
+/* paused status loop */
+func GamePausedLoop(game *Game){
+	log.Println("***game Paused status***")
+	game.Status = Paused
+}
+
+/* running status loop */
+func GameRunningLoop(game *Game){
+	log.Println("***game Running status***")
+	game.Status = Running
 	// game have a inner timer,it always run like in real world
 	timer := time.NewTimer(time.Second)
-	PrepairFiveSeconds(game)
 	for {
 		select {
-		case msg := <-gamePipe:
+		case msg := <-game.MsgPipe:
 			log.Printf("get msg for game:%v\n", msg)
-		case <-gameConnBrokenPipe:
+		case <-game.InnerMsgPipe:
 		case <-timer.C:
 			// 读秒
 		}
@@ -500,7 +528,7 @@ func InviteAutoMatch(cond *InviteCondition, cp *ClientProxy) {
 			!clientProxy.Player.IsPlaying && 
 			cp != clientProxy {
 			_ = NewGame(cond, cp, clientProxy)
-			// go GameLoop(make(chan *wq.Msg), game)
+			// go (make(chan *wq.Msg), game)
 			return
 		}
 	}
@@ -626,12 +654,8 @@ func ConnBroken(clientProxy *ClientProxy) {
 	// tell server
 	serverInnerPipe <- innerMsg
 	// tell game
-	for _, gameId := range append(clientProxy.PlayingGameIds, clientProxy.WatchingGameIds...) {
-		if gameInnerPipe, found := gameInnerPipes[gameId]; found {
-			gameInnerPipe <- innerMsg
-		} else {
-			log.Fatalf("can't find the gameId: %d\n", gameId)
-		}
+	for _, game := range append(clientProxy.PlayingGames, clientProxy.WatchingGames...) {
+		game.InnerMsgPipe <- innerMsg
 	}
 	log.Println("****line broken****")
 }
@@ -657,10 +681,11 @@ func DispatchMsg(msg *wq.Msg,clientProxy *ClientProxy) {
 	gameId := msg.GetId()
 	if gameId > 0 {
 		// give msg to #gameId# game
-		if gamePipe,found := gamePipes[gameId]; found {
-			gamePipe <- cpm
-		}else{
-			log.Fatalf("not find game by id: %v\n",gameId)
+		for _,game := range games {
+			if game.Id == gameId {
+				game.MsgPipe <- cpm
+				break
+			}
 		}
 	}else{
 		// give msg to server
