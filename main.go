@@ -528,6 +528,10 @@ func SearchClientProxyByAddr(clientProxys []*ClientProxy, cp *ClientProxy) int {
 	})
 }
 
+func IsClientProxyBroken(clientProxy *ClientProxy) bool {
+	return SearchClientProxy(brokenClientProxys, func(cp *ClientProxy) bool { return clientProxy == cp }) >= 0 
+}
+
 func NewInviteFail(reason string) *wq.Msg {
 	return &wq.Msg{Union: &wq.Msg_InviteFail{&wq.InviteFail{Reason: reason}}}
 }
@@ -599,7 +603,7 @@ func (clientProxy *ClientProxy) HandleUp() {
 	head := uint32(0)
 	bodyLen := 0 //bodyLen is a flag,when readed head,but body'len is not enougth
 
-	for SearchClientProxyByAddr(brokenClientProxys, clientProxy) < 0 {
+	for IsClientProxyBroken(clientProxy) {
 		n, err := clientProxy.Conn.Read(readBuf)
 		if err != nil {
 			if err == io.EOF {
@@ -643,7 +647,7 @@ func (clientProxy *ClientProxy) HandleUp() {
 }
 
 func (clientProxy *ClientProxy) HandleDown() {
-	for SearchClientProxyByAddr(brokenClientProxys, clientProxy) < 0 {
+	for IsClientProxyBroken(clientProxy) {
 		msg := <-clientProxy.Down
 		clientProxy.WriteMsg(msg)
 	}
