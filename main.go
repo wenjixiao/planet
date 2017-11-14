@@ -246,8 +246,6 @@ var (
 	serverPipe           chan *ClientProxyMsg        = make(chan *ClientProxyMsg)
 	serverInnerPipe chan *InnerMsg           = make(chan *InnerMsg)
 	games []*Game = []*Game{}
-	// gamePipes            map[int32]chan *ClientProxyMsg      = map[int32]chan *ClientProxyMsg{}
-	// gameInnerPipes  map[int32]chan *InnerMsg = map[int32]chan *InnerMsg{}
 	clientProxys         []*ClientProxy              = []*ClientProxy{}
 	idpool               *IdPool                     = NewIdPool(IdPoolSize)
 )
@@ -568,16 +566,14 @@ func ListenLoop() {
 		}
 
 		clientProxy := &ClientProxy{Conn: conn, Down: make(chan *wq.Msg)}
-
 		clientProxys = append(clientProxys, clientProxy)
-
-		go HandleUp(clientProxy)
-		go HandleDown(clientProxy)
+		go clientProxy.HandleUp()
+		go clientProxy.HandleDown()
 	}
 	log.Println("listen loop exit,all exit!")
 }
 
-func HandleUp(clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) HandleUp() {
 	defer clientProxy.Conn.Close()
 
 	const MSG_BUF_LEN = 1024 * 1024 //1MB
@@ -595,10 +591,10 @@ func HandleUp(clientProxy *ClientProxy) {
 		n, err := clientProxy.Conn.Read(readBuf)
 		if err != nil {
 			if err == io.EOF {
-				ConnClosed(clientProxy)
+				clientProxy.ConnClosed()
 			} else {
 				log.Printf("Read error: %s\n", err)
-				ConnBroken(clientProxy)
+				clientProxy.ConnBroken()
 			}
 			break
 		}
@@ -623,7 +619,7 @@ func HandleUp(clientProxy *ClientProxy) {
 			}
 			//has head,now read body
 			if bodyLen > 0 && msgBuf.Len() >= bodyLen {
-				ProcessMsg(msgBuf.Next(bodyLen), clientProxy)
+				clientProxy.ProcessMsg(msgBuf.Next(bodyLen))
 				bodyLen = 0
 			} else {
 				//msgBuf.Len() < bodyLen ,one msg receiving is not complete
@@ -634,20 +630,20 @@ func HandleUp(clientProxy *ClientProxy) {
 	} //for of conn read
 }
 
-func HandleDown(clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) HandleDown() {
 	for !clientProxy.IsConnBroken {
 		msg := <-clientProxy.Down
-		WriteMsg(msg, clientProxy.Conn)
+		clientProxy.WriteMsg(msg)
 	}
 }
 
-func ConnClosed(clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) ConnClosed() {
 	log.Println("****line closed****")
 	serverInnerPipe <- &InnerMsg{InnerConnClosed,clientProxy}
 }
 
 /* 每一次有新连接到来时，都新建一个clientproxy,所以，连接断裂时，要抛弃旧的 */
-func ConnBroken(clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) ConnBroken() {
 	//when conn broken,we should reset the message buffer too!
 	clientProxy.IsConnBroken = true
 	innerMsg := &InnerMsg{InnerConnBroken,clientProxy}
@@ -660,7 +656,7 @@ func ConnBroken(clientProxy *ClientProxy) {
 	log.Println("****line broken****")
 }
 
-func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) ProcessMsg(msgBytes []byte) {
 	log.Println("------------------------")
 	msg := &wq.Msg{}
 	err := proto.Unmarshal(msgBytes, msg)
@@ -669,14 +665,14 @@ func ProcessMsg(msgBytes []byte, clientProxy *ClientProxy) {
 	}
 	log.Printf("#the MSG#: %s\n", msg)
 	// 分发到相应的地方
-	DispatchMsg(msg,clientProxy)
+	clientProxy.DispatchMsg(msg)
 }
 
 /*
  *todo* here we should dispatch the msg to 1:Server or a 2:Game
  1,确定是server的，还是game的；2,确定是那个game的
  */
-func DispatchMsg(msg *wq.Msg,clientProxy *ClientProxy) {
+func (clientProxy *ClientProxy) DispatchMsg(msg *wq.Msg) {
 	cpm := &ClientProxyMsg{clientProxy, msg}
 	gameId := msg.GetId()
 	if gameId > 0 {
@@ -699,12 +695,12 @@ func AddHeader(msgBytes []byte) []byte {
 	return append(head, msgBytes...)
 }
 
-func WriteMsg(msg *wq.Msg, conn net.Conn) {
+func (clientProxy *ClientProxy) WriteMsg(msg *wq.Msg) {
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
 		log.Fatalf("proto marshal error: %s\n", err)
 	}
-	_, err = conn.Write(AddHeader(msgBytes))
+	_, err = clientProxy.Conn.Write(AddHeader(msgBytes))
 	if err != nil {
 		log.Fatalf("conn write error: %s\n", err)
 	}
