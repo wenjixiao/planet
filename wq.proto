@@ -69,6 +69,46 @@ message Login{
 
 message LoginReturnOk {
 	Player player = 1;
+	repeated Game playingGames = 2;	
+}
+
+message Game {
+	int32 id = 1;
+	Rule rule = 2;
+	int32 status = 3;
+	int32 lastColor = 4;
+	repeated Stone stones = 5;
+	Result result = 6;
+	repeated Player players = 7;
+	repeated Time times = 8;
+	repeated Player watchers = 9;
+}
+
+message Time {
+	int32 seconds = 1;
+	Counting counting = 2;
+}
+
+message Result {
+	bool hasWinner = 1;
+	int32 winnerColor = 2;
+	bool middleWin = 3;
+	bool timeWin = 4;
+	float howmuch = 5;
+}
+
+message Stone {
+	int32 seq = 1;
+	int32 color = 2;
+	int32 x = 3;
+	int32 y = 4;
+}
+
+message Rule {
+	int32 handicap = 1;
+	float komi = 2;
+	int32 seconds = 3;
+	Counting counting = 4;
 }
 
 message LoginReturnFail {

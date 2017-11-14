@@ -137,6 +137,13 @@ type ClientProxy struct {
 	WatchingGames []*Game // 观看的棋
 }
 
+func (cp *ClientProxy) GetPlayingGamesMsg () (msgGames []*wq.Game) {
+	for _,game := range cp.PlayingGames {
+		msgGames = append(msgGames,game.ToMsg())
+	}
+	return
+}
+
 type ClientProxyMsg struct {
 	Cp  *ClientProxy
 	Msg *wq.Msg
@@ -146,6 +153,15 @@ type Stone struct {
 	Seq   int32
 	Color int32
 	X, Y  int32
+}
+
+func (s *Stone) ToMsg() *wq.Stone {
+	return &wq.Stone{
+		Seq: s.Seq,
+		Color: s.Color,
+		X: s.X,
+		Y: s.Y,
+	}
 }
 
 type Counting struct {
@@ -203,6 +219,15 @@ type Rule struct {
 	Counting Counting //读秒
 }
 
+func (r *Rule) ToMsg() *wq.Rule {
+	return &wq.Rule{
+		Handicap: r.Handicap,
+		Komi: r.Komi,
+		Seconds: r.Seconds,
+		Counting: r.Counting.ToMsg(),
+	}
+}
+
 func (r *Rule) MakeTime() Time {
 	return Time{
 		Seconds:  r.Seconds,
@@ -217,9 +242,26 @@ type Result struct {
 	Howmuch            float32
 }
 
+func (r *Result) ToMsg() *wq.Result {
+	return &wq.Result{
+		HasWinner: r.HasWinner,
+		WinnerColor: r.WinnerColor,
+		MiddleWin: r.MiddleWin,
+		TimeWin: r.TimeWin,
+		Howmuch: r.Howmuch,
+	}
+}
+
 type Time struct {
-	Counting Counting
 	Seconds  int32
+	Counting Counting
+}
+
+func (t *Time) ToMsg() *wq.Time {
+	return &wq.Time{
+		Seconds: t.Seconds,
+		Counting: t.Counting.ToMsg(),
+	}
 }
 
 type Game struct {
@@ -234,6 +276,48 @@ type Game struct {
 	WatcherCps   []*ClientProxy
 	MsgPipe      chan *ClientProxyMsg
 	InnerMsgPipe chan *InnerMsg
+}
+
+func (g *Game) GetTimesMsg() (times []*wq.Time) {
+	for _,t := range g.Times {
+		times = append(times,t.ToMsg())
+	}
+	return
+}
+
+func (g *Game) GetPlayersMsg() (players []*wq.Player) {
+	for _,cp := range g.PlayerCps {
+		players = append(players,cp.Player.ToMsg())
+	}
+	return
+}
+
+func (g *Game) GetWatchersMsg() (watchers []*wq.Player) {
+	for _,cp := range g.WatcherCps {
+		watchers = append(watchers,cp.Player.ToMsg())
+	}
+	return
+}
+
+func (g *Game) GetStonesMsg() (stones []*wq.Stone) {
+	for _,stone := range g.Stones {
+		stones = append(stones,stone.ToMsg())
+	}
+	return
+}
+
+func (g *Game) ToMsg() *wq.Game {
+	return &wq.Game{
+		Id: g.Id,
+		Rule: g.Rule.ToMsg(),
+		Status: g.Status,
+		LastColor: g.LastColor,
+		Stones: g.GetStonesMsg(),
+		Result: g.Result.ToMsg(),
+		Players: g.GetPlayersMsg(),
+		Times: g.GetTimesMsg(),
+		Watchers: g.GetWatchersMsg(),
+	}
 }
 
 type InnerMsg struct {
@@ -482,7 +566,10 @@ func ServerLoop() {
 					// return msg to client,means login ok,if reconnect,have games data
 					clientProxy.Down <- &wq.Msg{
 						Union: &wq.Msg_LoginReturnOk{
-							&wq.LoginReturnOk{Player: player.ToMsg()},
+							&wq.LoginReturnOk{
+								Player: player.ToMsg(),
+								PlayingGames: clientProxy.GetPlayingGamesMsg(),
+							},
 						},
 					}
 					// if have playing games ,tell every game,the reconnect event
