@@ -32,6 +32,7 @@ const (
 
 	InnerConnBroken = 0
 	InnerConnClosed = 1
+	InnerReconnectOk = 2
 )
 
 type Level struct {
@@ -464,12 +465,30 @@ func ServerLoop() {
 				player := &Player{}
 				if GetPlayer(player, login.Pid, login.Passwd) {
 					clientProxy.Player = player
-					msgOk := &wq.Msg{
+					/* the player broken before,reconnect now */
+					if index := SearchClientProxyById(brokenClientProxys,clientProxy.Player.Pid);index >=0 {
+						// get the broken client proxy
+						brokenClientProxy := brokenClientProxys[index]
+						// delete old broken client proxy from brokenClientProxys
+						brokenClientProxys = append(brokenClientProxys[:index],brokenClientProxys[index+1:]...)
+						// move the game's data to new client proxy
+						clientProxy.PlayingGames = brokenClientProxy.PlayingGames
+						// remove the broken client proxy from games and replace by new client proxy
+						for _,game := range clientProxy.PlayingGames {
+							index := SearchClientProxyByAddr(game.PlayerCps,brokenClientProxy)
+							if index >= 0 { game.PlayerCps[index] = clientProxy }
+						}
+					}
+					// return msg to client,means login ok,if reconnect,have games data
+					clientProxy.Down <- &wq.Msg{
 						Union: &wq.Msg_LoginReturnOk{
 							&wq.LoginReturnOk{Player: player.ToMsg()},
 						},
 					}
-					clientProxy.Down <- msgOk
+					// if have playing games ,tell every game,the reconnect event
+					for _,game := range clientProxy.PlayingGames {
+						game.InnerMsgPipe <- &InnerMsg{InnerReconnectOk,clientProxy} 
+					}
 				} else {
 					msgFail := &wq.Msg{
 						Union: &wq.Msg_LoginReturnFail{
